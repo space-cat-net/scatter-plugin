@@ -77,13 +77,13 @@ var _masks: Array[Image] = []
 
 # Populate instances from cache on ready
 # WARNING: Do not override this method, or add [code]super()[/code]
-func _ready() -> void:
-	populate_instances.call_deferred()
+func _enter_tree() -> void:
+	populate_instances()
 
 # Remove all instances when exiting
 # WARNING: Do not override this method, or add [code]super()[/code]
 func _exit_tree() -> void:
-	clear_instances.call_deferred()
+	clear_instances()
 
 ## Generate transforms and save them to cache.
 ## If [code]populate[/code] is [code]true[/code]
