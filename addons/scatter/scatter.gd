@@ -13,8 +13,11 @@ extends Node3D
 ## Maximum number of generated instances
 const MAX_INSTANCES = 65536
 
-## Maximum try count to place one instance.
-const MAX_GENERATION_LOOPS = 65536
+## Maximum seconds to generate instances
+const MAX_GENERATION_TIME = 120 * 1000
+
+## Maximum try count for Poisson disk sampling.
+const MAX_POINT_ATTEMPTS = 16
 
 enum CollisionShapeMode {
 	## Disable any collisions for this type of instance.
@@ -44,6 +47,7 @@ enum CollisionShapeMode {
 ## every generation but [b]not[/b] population. Population uses
 ## generation cache, so it will be same.
 @export_range(-1, 1, 1, 'or_greater') var generator_seed: int = -1
+@export_range(0, 100, 0.001, 'or_greater', 'suffix:m') var radius: float = 1.0
 ## Dimensions of a box, inside which instances will be scattered.
 @export_custom(PROPERTY_HINT_RANGE, '0.001,512,0.001,hide_control,suffix:m') var boundaries: Vector3 = Vector3(20, 10, 20):
 	set(val):
@@ -66,10 +70,9 @@ var _colliders: Array[RID]
 var _bodies: Array[RID]
 
 # Generation arrays
-var _grid: Dictionary[Vector3, bool] = {}
 var _subtractions: Array[ScatterShape3D] = []
-var _types: PackedInt32Array = PackedInt32Array()
-var _weights: PackedFloat32Array = PackedFloat32Array()
+var _types: PackedInt32Array = []
+var _weights: PackedFloat32Array = []
 var _masks: Array[Image] = []
 
 
@@ -175,8 +178,28 @@ func generate_transforms(populate: bool = true) -> void:
 	var type: int
 	var is_inside_remover: bool
 	
-	_grid.clear()
-	var raycast: Dictionary
+	var points: Array = []
+	var point_angle: float
+	var point_on_grid: Vector2i
+	var can_place: bool
+	
+	var grid_size: float = radius / (1.4142135623730951 * 0.999)
+	var grid_width = ceili(boundaries.x / grid_size) + 2
+	var grid_depth = ceili(boundaries.z / grid_size) + 2
+	var grid_min = -boundaries * 0.5
+	var grid_points: PackedVector3Array = []
+	grid_points.resize(grid_width * grid_depth)
+	grid_points.fill(Vector3.INF)
+	
+	
+	var active_points: PackedVector3Array = [
+		Vector3(boundaries.x * 0.25, 0, boundaries.z * 0.25),
+	]
+	print(active_points)
+	var active_point: Vector3
+	var tries: int
+	
+	var raycast: Dictionary = {}
 	var local_ray_pos: Vector3
 	var texture_mask_value: float
 	var texture_mask_size: Vector2i
@@ -185,21 +208,49 @@ func generate_transforms(populate: bool = true) -> void:
 	var type_data: ScatterInstanceType
 	
 	# Main generation loop
-	while cache.cached_transforms.size() < MAX_INSTANCES and loop < MAX_GENERATION_LOOPS:
-		loop += 1 # Increase loop counter
-		# Pick a point
-		point = Vector3(
-			snappedf(random.randf_range(-1, 1) * (boundaries.x * 0.5), density),
-			0,
-			snappedf(random.randf_range(-1, 1) * (boundaries.z * 0.5), density),
-		)
+	while Time.get_ticks_msec() - time < MAX_GENERATION_TIME and (not active_points.is_empty() or loop == 0) and cache.cached_transforms.size() <= MAX_INSTANCES:
+		loop += 1
 		
-		# Continue if cell is occupied
-		if point in _grid:
+		var idx := random.randi_range(0, active_points.size() - 1)
+		var current := active_points[idx]
+		var placed := false
+		
+		for attempt in range(MAX_POINT_ATTEMPTS):
+			var angle := random.randf_range(0, TAU)
+			point = current + (Vector3(cos(angle), 0.0, sin(angle)) * radius * sqrt(random.randf_range(1.0, 4.0)))
+			
+			
+			var ix := floori((point.x - grid_min.x) / grid_size)
+			var iz := floori((point.z - grid_min.z) / grid_size)
+			if ix < 0 or ix >= grid_width or iz < 0 or iz >= grid_depth or grid_points[ix + iz * grid_width] != Vector3.INF:
+				continue
+			
+			can_place = true
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					var nx := ix + dx
+					var nz := iz + dz
+					if nx < 0 or nx >= grid_width or nz < 0 or nz >= grid_depth:
+						continue
+					var neighbor := grid_points[nx + nz * grid_width]
+					if neighbor != Vector3.INF and neighbor.distance_squared_to(point) < radius ** 2:
+						can_place = false
+						break
+				if not can_place:
+					break
+			
+			if not can_place:
+				continue
+			
+			grid_points[ix + iz * grid_width] = point
+			points.append(point)
+			active_points.append(point)
+			placed = true
+			break
+		
+		if not placed:
+			active_points.remove_at(idx)
 			continue
-		
-		# Occupy cell
-		_grid[point] = true
 		
 		# Use distribution mask
 		if random.randf() > distribution_mask:
@@ -207,11 +258,11 @@ func generate_transforms(populate: bool = true) -> void:
 		
 		# Adjust point
 		point = point + Vector3(0, boundaries.y * 0.5, 0)
-		point += Vector3(
-			random.randf_range(-density * 0.4, density * 0.4),
-			0,
-			random.randf_range(-density * 0.4, density * 0.4)
-		)
+		#point += Vector3(
+			#random.randf_range(-density * 0.4, density * 0.4),
+			#0,
+			#random.randf_range(-density * 0.4, density * 0.4)
+		#)
 		
 		# Intersect ray with source triangle mesh
 		raycast = source_triangle_mesh.intersect_ray(source_mesh_instance.to_local(to_global(point)), Vector3.DOWN)
@@ -287,6 +338,8 @@ func generate_transforms(populate: bool = true) -> void:
 	
 	if loop > 0:
 		cache.is_empty = false
+	
+	print_debug('Generation in ', Time.get_ticks_msec() - time, ' milliseconds with ', cache.cached_transforms.size(), ' instances.')
 	
 	# Auto populate
 	if populate and not cache.is_empty:
