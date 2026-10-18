@@ -64,8 +64,6 @@ var _instances: Array[RID]
 # PhysicsServer3D instances
 var _colliders: Array[RID]
 var _bodies: Array[RID]
-# NavigationServer3D instances
-var _obstacles: Array[RID]
 
 # Generation arrays
 var _grid: Dictionary[Vector3, bool] = {}
@@ -75,15 +73,20 @@ var _weights: PackedFloat32Array = PackedFloat32Array()
 var _masks: Array[Image] = []
 
 
-# Populate instances from cache on ready
-# WARNING: Do not override this method, or add [code]super()[/code]
 func _enter_tree() -> void:
 	populate_instances()
 
-# Remove all instances when exiting
-# WARNING: Do not override this method, or add [code]super()[/code]
 func _exit_tree() -> void:
 	clear_instances()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED:
+		if visible:
+			populate_instances()
+		else:
+			clear_instances()
+	if what == NOTIFICATION_PREDELETE:
+		clear_instances()
 
 ## Generate transforms and save them to cache.
 ## If [code]populate[/code] is [code]true[/code]
@@ -94,26 +97,6 @@ func generate_transforms(populate: bool = true) -> void:
 	# Clear cache and remove instances
 	clear_instances()
 	clear_cache()
-	
-	# Check types
-	var found_valid: bool = false
-	var found_invalid: bool = false
-	for i in instance_types:
-		if is_instance_valid(i) and i.is_valid():
-			found_valid = true
-		else:
-			found_invalid = true
-	
-	
-	if not found_valid or found_invalid:
-		push_error('Can\'t generate data. Instance types are invalid.')
-		if Engine.is_editor_hint():
-			EditorInterface.get_editor_toaster().push_toast(
-				'Can\'t generate data. Instance types are invalid.',
-				EditorToaster.Severity.SEVERITY_ERROR,
-				'Add instance types before generation and check if they are valid.'
-			)
-		return
 	
 	# Getting source mesh
 	var source_mesh_instance: MeshInstance3D = get_node_or_null(source_mesh_path)
@@ -138,10 +121,9 @@ func generate_transforms(populate: bool = true) -> void:
 	
 	# Generate collision shapes
 	# WARNING: Native collision generation is slow
-	
 	var shape: Shape3D
 	for idx in range(instance_types.size()):
-		if is_instance_valid(instance_types[idx]) and instance_types[idx].is_valid():
+		if is_instance_valid(instance_types[idx]):
 			var type = instance_types[idx]
 			_types.append(idx)
 			_weights.append(type.generation_weight)
@@ -168,6 +150,9 @@ func generate_transforms(populate: bool = true) -> void:
 			
 			# Add shape to list
 			cache.cached_type_collision_shapes.append(shape)
+		else:
+			push_error('Can\'t generate data. Instance types are invalid.')
+			return
 	
 	# Getting all subtractions
 	_subtractions.clear()
@@ -287,7 +272,13 @@ func generate_transforms(populate: bool = true) -> void:
 		# Transform generation
 		xform = Transform3D(source_mesh_instance.global_basis, point)
 		xform = xform.translated_local(type_data.position_offset)
-		xform = xform.scaled_local(Vector3.ONE * (type_data.base_scale + (random.randf_range(-1, 1) * type_data.random_scale)))
+		xform = xform.scaled_local(
+			Vector3.ONE
+			 * (
+				type_data.base_scale
+				 + (random.randf_range(-1, 1) * type_data.random_scale)
+			)
+		)
 		xform = xform.rotated_local(Vector3.UP, random.randf_range(-1, 1) * type_data.random_rotation)
 		xform = xform.rotated_local(Vector3.RIGHT, random.randf_range(-1, 1) * type_data.random_tilt)
 		xform = xform.rotated_local(Vector3.BACK, random.randf_range(-1, 1) * type_data.random_tilt)
@@ -296,15 +287,6 @@ func generate_transforms(populate: bool = true) -> void:
 	
 	if loop > 0:
 		cache.is_empty = false
-	
-	# Notify user when nothing is generated
-	if cache.is_empty:
-		push_error('Instances aren\'t generated, because there aren\'t any correct position.')
-		if Engine.is_editor_hint():
-			EditorInterface.get_editor_toaster().push_toast(
-				'Instances aren\'t generated, because there aren\'t any correct position.',
-				EditorToaster.Severity.SEVERITY_ERROR,
-			)
 	
 	# Auto populate
 	if populate and not cache.is_empty:
@@ -315,16 +297,11 @@ func generate_transforms(populate: bool = true) -> void:
 func populate_instances() -> void:
 	# Clear previous instances
 	clear_instances()
+	if not visible:
+		return
 	
 	# Error when populating before generation
 	if not is_instance_valid(cache) or cache.is_empty:
-		if Engine.is_editor_hint():
-			EditorInterface.get_editor_toaster().push_toast(
-				'Generate data before population.',
-				EditorToaster.Severity.SEVERITY_WARNING,
-				'To generate data, press "Generate" button in inspector.'
-			)
-		push_warning('Generate data before population.')
 		return
 	
 	# Generate body
@@ -341,7 +318,6 @@ func populate_instances() -> void:
 	
 	# Define variables
 	var instance: RID
-	var navigation_obstacle: RID
 	var type: ScatterInstanceType
 	var type_idx: int
 	var do_physics_pass: bool = (
@@ -356,16 +332,22 @@ func populate_instances() -> void:
 	for idx in range(len(cache.cached_transforms)):
 		type_idx = cache.cached_instance_types[idx]
 		type = instance_types[type_idx]
+		if not is_instance_valid(type) or not is_instance_valid(type.mesh):
+			continue
 		
 		# Mesh instance creation on RenderingServer
 		instance = RenderingServer.instance_create()
 		RenderingServer.instance_set_scenario.call_deferred(instance, get_world_3d().scenario)
 		RenderingServer.instance_set_base.call_deferred(instance, type.mesh)
+		
 		RenderingServer.instance_set_transform.call_deferred(instance, cache.cached_transforms[idx])
 		RenderingServer.instance_set_visibility_parent.call_deferred(instance, self)
+		
+		RenderingServer.instance_set_layer_mask.call_deferred(instance, type.layers)
 		RenderingServer.instance_attach_object_instance_id.call_deferred(instance, get_instance_id())
 		RenderingServer.instance_geometry_set_cast_shadows_setting.call_deferred(instance, type.cast_shadow)
 		RenderingServer.instance_geometry_set_lod_bias.call_deferred(instance, type.lod_bias)
+		
 		RenderingServer.instance_geometry_set_flag.call_deferred(
 			instance,
 			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_BAKED_LIGHT,
@@ -376,6 +358,7 @@ func populate_instances() -> void:
 			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_DYNAMIC_GI,
 			type.gi_mode == GeometryInstance3D.GIMode.GI_MODE_DYNAMIC
 		)
+		
 		RenderingServer.instance_geometry_set_visibility_range.call_deferred(
 			instance,
 			type.visibility_range_begin,
@@ -385,33 +368,10 @@ func populate_instances() -> void:
 			type.visibility_range_fade_mode,
 		)
 		
-		_instances.append(instance)
+		if type.custom_aabb.has_volume():
+			RenderingServer.instance_set_custom_aabb.call_deferred(instance, type.custom_aabb)
 		
-		# Navigation obstacle adding
-		if type.navigation_enabled:
-			navigation_obstacle = NavigationServer3D.obstacle_create()
-			NavigationServer3D.obstacle_set_map(
-				navigation_obstacle, get_world_3d().get_navigation_map()
-			)
-			NavigationServer3D.obstacle_set_position.call_deferred(
-				navigation_obstacle, cache.cached_transforms[idx].origin
-			)
-			NavigationServer3D.obstacle_set_radius.call_deferred(
-				navigation_obstacle, type.navigation_radius
-			)
-			NavigationServer3D.obstacle_set_avoidance_layers.call_deferred(
-				navigation_obstacle,
-				type.navigation_avoidance_layers
-			)
-			NavigationServer3D.obstacle_set_use_3d_avoidance.call_deferred(
-				navigation_obstacle,
-				type.navigation_use_3d_avoidance
-			)
-			NavigationServer3D.obstacle_set_avoidance_enabled.call_deferred(
-				navigation_obstacle,
-				type.navigation_enabled
-			)
-			_obstacles.append(navigation_obstacle)
+		_instances.append(instance)
 		
 		# Physics shape adding
 		if (
@@ -443,14 +403,10 @@ func clear_instances() -> void:
 	for i in _colliders + _bodies:
 		PhysicsServer3D.free_rid(i)
 	
-	for i in _obstacles:
-		NavigationServer3D.free_rid(i)
-	
 	
 	_instances = []
 	_colliders = []
 	_bodies = []
-	_obstacles = []
 
 ## Returns [code]true[/code] if cache is generated.
 func is_generated() -> bool:
@@ -468,7 +424,4 @@ func _btn_generate() -> void:
 func _btn_populate() -> void:
 	clear_instances()
 	populate_instances()
-
-func _btn_hide() -> void:
-	clear_instances()
 #endregion

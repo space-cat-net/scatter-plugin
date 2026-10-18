@@ -69,8 +69,7 @@ enum RegionMode {
 ## Random seed. Useless if [code]probability == 0[/code].
 ## If set to [code]-1[/code], will always randomize seed.
 @export_range(-1, 1, 1, 'or_greater') var seed: int = -1
-@export_group('Types')
-# @export_custom(PROPERTY_HINT_FLAGS, '') var type_flags: int = -1
+
 
 func _validate_property(property: Dictionary) -> void:
 	if property.name.begins_with('sphere_') and shape != RegionShapeType.SPHERE:
@@ -81,21 +80,7 @@ func _validate_property(property: Dictionary) -> void:
 		property.usage = PROPERTY_USAGE_NONE
 	if property.name.begins_with('polygon_') and shape != RegionShapeType.POLYGON:
 		property.usage = PROPERTY_USAGE_NONE
-	
-	#if property.name == &'type_flags':
-		#if is_instance_valid(get_parent()) and get_parent() is Scatter3D:
-			#var parent: Scatter3D = get_parent() as Scatter3D
-			#var types: PackedStringArray
-			#for i in parent.instance_types:
-				#var type_name = i.resource_name
-				#if type_name == '':
-					#type_name = i.mesh.resource_path.get_file()
-				#types.append(type_name)
-			#property.hint_string = ','.join(types)
-		#else:
-			#property.hint_string = ''
-			#property.usage |= PROPERTY_USAGE_READ_ONLY
-		
+
 
 func _get_configuration_warnings() -> PackedStringArray:
 	var errors = PackedStringArray()
@@ -105,11 +90,13 @@ func _get_configuration_warnings() -> PackedStringArray:
 		errors.append('Polygon must have at least 3 points.')
 	return errors
 
+
 func _get_path() -> Path3D:
 	for i in get_children():
 		if is_instance_valid(i) and i is Path3D and is_instance_valid(i.curve):
 			return i
 	return null
+
 
 func _is_point_inside_shape(point: Vector3, scatter: Scatter3D, random: RandomNumberGenerator) -> bool:
 	var local_pos = to_local(point)

@@ -24,6 +24,7 @@ func reset() -> void:
 	cached_seed = -1
 	is_empty = true
 
+
 func _get_property_list() -> Array[Dictionary]:
 	var prop: Array[Dictionary] = []
 	prop.append(

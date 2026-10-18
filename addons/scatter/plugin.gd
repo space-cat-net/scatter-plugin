@@ -12,7 +12,6 @@ var remover_modifier_gizmo = ScatterShapeGizmo.new() # Gizmo for InstanceRemover
 
 var scatter_buttons: HBoxContainer
 var generate_button: Button
-var toggle_button: Button
 var separator: VSeparator
 var icon: Button
 
@@ -39,32 +38,10 @@ func _generate_button_pressed() -> void:
 		i._btn_generate()
 
 
-func _toggle_button_pressed() -> void:
-	var scatters = get_operating_scatters()
-	
-	if scatters[0].is_populated():
-		scatters[0]._btn_hide()
-		toggle_button.icon = get_editor_interface().get_editor_theme().get_icon(&'GuiVisibilityHidden', &'EditorIcons')
-	else:
-		scatters[0]._btn_populate()
-		toggle_button.icon = get_editor_interface().get_editor_theme().get_icon(&'GuiVisibilityVisible', &'EditorIcons')
-	
-	toggle_button.show()
-
-
 func _editor_interface_selection_changed() -> void:
 	var editor_selection: EditorSelection = EditorInterface.get_selection()
 	scatter_buttons.visible = _can_show_scatter_buttons(editor_selection)
 	var scatters = get_operating_scatters()
-	
-	if len(scatters) == 1:
-		toggle_button.show()
-		if scatters[0].is_populated():
-			toggle_button.icon = get_editor_interface().get_editor_theme().get_icon(&'GuiVisibilityVisible', &'EditorIcons')
-		else:
-			toggle_button.icon = get_editor_interface().get_editor_theme().get_icon(&'GuiVisibilityHidden', &'EditorIcons')
-	else:
-		toggle_button.hide()
 
 
 func _can_show_scatter_buttons(editor_selection: EditorSelection) -> bool:
@@ -113,16 +90,6 @@ func _enter_tree() -> void:
 	generate_button.icon = get_editor_interface().get_editor_theme().get_icon(&'RandomNumberGenerator', &'EditorIcons')
 	generate_button.pressed.connect(_generate_button_pressed)
 	scatter_buttons.add_child(generate_button)
-	
-	toggle_button = Button.new()
-	toggle_button.text = ''
-	toggle_button.tooltip_text = 'Hide instances'
-	toggle_button.theme = get_editor_interface().get_editor_theme()
-	toggle_button.theme_type_variation = 'FlatMenuButton'
-	toggle_button.icon = get_editor_interface().get_editor_theme().get_icon(&'GuiVisibilityVisible', &'EditorIcons')
-	toggle_button.pressed.connect(_toggle_button_pressed)
-	scatter_buttons.add_child(toggle_button)
-	
 	
 	add_control_to_container(EditorPlugin.CONTAINER_SPATIAL_EDITOR_MENU, scatter_buttons)
 	scatter_buttons.hide.call_deferred()
