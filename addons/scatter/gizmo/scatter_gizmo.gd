@@ -36,7 +36,7 @@ func _redraw(gizmo: EditorNode3DGizmo) -> void:
 	var lines := PackedVector3Array()
 	var node: Scatter3D = gizmo.get_node_3d()
 	
-	var size: Vector3 = node.boundaries
+	var size: Vector3 = node.scatter_region
 	
 	lines = make_wireframe_cube(size)
 	
