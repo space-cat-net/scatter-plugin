@@ -4,6 +4,16 @@ class_name ScatterData
 extends Resource
 
 
+## Baked output of [Scatter3D] generation.
+##
+## Stores instance transforms, per-instance type indices, and the seed used for
+## generation in compact [PackedFloat32Array] / [PackedInt32Array] form - small
+## enough to save with the scene without bloating it. [Scatter3D] reads this on
+## [code]_enter_tree[/code] to spawn RIDs without re-running Poisson disk sampling.
+##
+## Created by [method Scatter3D.generate]. Do not edit manually.
+
+
 # Per-instance cache
 @export_storage var transforms: Array[Transform3D]
 @export_storage var prototypes: PackedInt32Array

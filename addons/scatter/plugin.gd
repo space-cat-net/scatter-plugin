@@ -3,13 +3,12 @@ extends EditorPlugin
 
 
 const SCATTER_ICON = preload('res://addons/scatter/assets/scatter.svg')
-
 const ScatterGizmo = preload('res://addons/scatter/gizmo/scatter_gizmo.gd')
 
 var scatter_gizmo = ScatterGizmo.new() # Gizmo for Scatter3D
-
 var buttons_container: HBoxContainer
 var selected_scatter: Scatter3D
+
 
 func _enter_tree() -> void:
 	# Load gizmo

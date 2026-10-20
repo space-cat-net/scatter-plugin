@@ -4,12 +4,19 @@ class_name Scatter3D
 extends Node3D
 
 
-## 3D mesh and collision scattering implementation.
+## Procedural scatter node for placing meshes on a surface using Poisson disk sampling.
 ##
-## Configurable solution for scattering objects on surface.
-## Supports collisions, randomization, filtering and masking.
+## Samples points across [member scatter_size], applies per-prototype filters,
+## masks, then projects each candidate onto the parent [MeshInstance3D].
+## Results are baked into [member bake] and spawned at runtime
+## as raw RIDs through [RenderingServer] and [PhysicsServer3D] -
+## no [Node3D] per instance, so tens of thousands of objects stay cheap.
+##
+## Run [method generate] from the editor to bake; instances spawn automatically
+## on [code]_enter_tree[/code] and are freed on [code]_exit_tree[/code].
 
 
+## Max attempts per point in Poisson Disk Sampling
 const MAX_POINT_ATTEMPTS = 32
 
 
