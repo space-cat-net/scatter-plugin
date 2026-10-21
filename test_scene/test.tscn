@@ -110,6 +110,7 @@ lod_bias = 0.7
 visibility_range_end = 40.0
 visibility_range_end_margin = 10.0
 visibility_range_fade_mode = 1
+weight = 2.0
 min_radius = 0.8
 metadata/_custom_type_script = "uid://b0p6mp2dxtpy1"
 
@@ -214,13 +215,13 @@ script = ExtResource("3_h4gmi")
 prototypes = Array[ExtResource("4_w3851")]([SubResource("Resource_o5ruh"), SubResource("Resource_4wdjm")])
 random_seed = 3
 scatter_region = Vector3(450, 10, 450)
-max_instances = null
 baked_data = ExtResource("5_w3851")
 metadata/_custom_type_script = "uid://w0lj2q7osp3t"
 
 [node name="Grass" type="Node3D" parent="Surface/SurfaceMesh" unique_id=1327904407]
 script = ExtResource("3_h4gmi")
 prototypes = Array[ExtResource("4_w3851")]([SubResource("Resource_xcje8"), SubResource("Resource_j1bqn"), SubResource("Resource_krebc"), SubResource("Resource_es6ul"), SubResource("Resource_wedu3"), SubResource("Resource_erchu")])
+sampling_algorithm = 1
 scatter_region = Vector3(450, 10, 450)
 baked_data = ExtResource("8_hc83m")
 metadata/_custom_type_script = "uid://w0lj2q7osp3t"

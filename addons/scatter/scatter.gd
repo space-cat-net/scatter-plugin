@@ -19,30 +19,51 @@ extends Node3D
 ## Max attempts per point in Poisson Disk Sampling
 const MAX_POINT_ATTEMPTS = 32
 
+## Max time (ms) spent on baking per frame. When exceeded, the generator yields
+## via `await get_tree().process_frame` and resumes next frame, keeping the
+## editor responsive during long bakes (tens of thousands of points).
+## Editor-only; not used at runtime.
+const BAKE_FRAME_BUDGET_MS := 64
+
+## Point generation strategy used during baking.
+enum SamplingAlgorithm {
+## Bridson's algorithm: evenly spaced points respecting per-prototype radii, no clumping. Slower but visually natural.
+	POISSON_DISK,
+## uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
+	RANDOM
+}
+
 
 #region Properties
 ## List of instance types Scatter3D will generate.
 ## Types define generation rules, visual and physical properties of instance .
-@export var prototypes: Array[ScatterPrototype] = []
+@export var prototypes: Array[ScatterPrototype]
 @export_group('Generation')
-## Random generation seed
+## Strategy used to generate candidate points during bake. Changing this
+## invalidates [member baked_data]; press Bake to rebuild. Parameters for the
+## selected algorithm (radius range, tries, density) are read from
+## [member prototypes] and Scatter3D's own settings.
+@export var sampling_algorithm: SamplingAlgorithm = SamplingAlgorithm.POISSON_DISK
+## Random generation seed. Changing this
+## invalidates [member baked_data]; press Bake to rebuild.
 @export_range(-1, 1, 1, 'or_greater', 'hide_control') var random_seed: int = -1
-## Dimensions of scattering region.
+## Dimensions of scattering region. Changing this
+## invalidates [member baked_data]; press Bake to rebuild.
 @export var scatter_region: Vector3 = Vector3(20, 10, 20):
 	set(val):
 		scatter_region = val
 		update_gizmos()
 @export_group('Performance')
-## Soft time budget (in milliseconds) for instance spawning within a single frame.
-## If the current batch exceeds this budget, generation pauses and resumes on the
-## next frame via [code]await get_tree().process_frame[/code], keeping the editor responsive.
-## Set to 0 to disable throttling (spawn everything in one frame — not recommended
-## for large scatters, may freeze the editor).
-@export_range(0, 100, 1) var frame_budget_ms: int = 16
+## Soft time budget (ms) for instance creation per frame during spawn.
+## When the budget is exceeded, spawning pauses and resumes next frame - 
+## keeps the editor and game responsive when loading
+## scenes with tens of thousands of instances. 0 disables throttling.
+## Do not recommended to disable, editor can crash when frame is too long.
+@export_range(0, 100, 1, 'or_greater', 'prefer_slider') var frame_budget_ms: int = 16
 ## Hard upper bound on the number of instances a single Scatter3D can spawn.
 ## Generation stops early once this limit is reached, keeping the engine stable
 ## and preventing accidental "scatter the whole world" scenarios.
-@export_range(0, 2 ** 20, 1, 'or_greater', 'exp', 'prefer_slider') var max_instances: int = 2 ** 18
+@export_range(1, 2 ** 20, 1, 'or_greater') var max_instances: int = 2 ** 18
 @export_group('Data')
 ## Baked generation result: instance transforms, type indices, and seed.
 ## [code]null[/code] if the scatter has never been generated or the bake was invalidated
@@ -175,70 +196,72 @@ func bake() -> void:
 	grid_radii.fill(0)
 	
 	var active_points: PackedVector3Array = [
-		Vector3(scatter_region.x * 0.25, 0, scatter_region.z * 0.25),
+		Vector3.ZERO,
 	]
 	var active_radii: PackedFloat32Array = [max_radius_overall]
 	var active_point: Vector3
 	
 	# Main generation loop
 	while not active_points.is_empty() and baked_data.transforms.size() < max_instances:
-		if frame_budget_ms > 0 and Time.get_ticks_msec() - frame_start > frame_budget_ms:
+		if Time.get_ticks_msec() - frame_start > BAKE_FRAME_BUDGET_MS:
 			await get_tree().process_frame
 			frame_start = Time.get_ticks_msec()
 		
 		# Find type
 		var prototype_index = type_indixes[random.rand_weighted(_weights)]
 		var prototype = prototypes[prototype_index]
-		var point_radius: float = random.randf_range(prototype.min_radius, prototype.max_radius)
 		
-		var idx: int = random.randi_range(0, active_points.size() - 1)
-		var current: Vector3 = active_points[idx]
-		var current_radius: float = active_radii[idx]
-		var placed: bool = false
-		var poisson_disk_point: Vector3
 		var point: Vector3
 		
-		for attempt in range(MAX_POINT_ATTEMPTS):
-			var angle := random.randf_range(0, TAU)
-			point = current + (Vector3(cos(angle), 0.0, sin(angle)) * maxf(point_radius, current_radius) * sqrt(random.randf_range(1.0, 4.0)))
+		if sampling_algorithm == SamplingAlgorithm.POISSON_DISK:
+			var idx: int = random.randi_range(0, active_points.size() - 1)
+			var point_radius: float = random.randf_range(prototype.min_radius, prototype.max_radius)
+			var current: Vector3 = active_points[idx]
+			var current_radius: float = active_radii[idx]
+			var placed: bool = false
 			
-			var ix := floori((point.x - grid_min.x) / grid_size)
-			var iz := floori((point.z - grid_min.z) / grid_size)
-			if ix < 0 or ix >= grid_width or iz < 0 or iz >= grid_depth or grid_points[ix + iz * grid_width] != Vector3.INF:
-				continue
-			
-			var cell_range = ceili(max_radius_overall / grid_size)
-			
-			var can_place = true
-			for dx in range(-cell_range, cell_range + 1):
-				for dz in range(-cell_range, cell_range + 1):
-					var nx := ix + dx
-					var nz := iz + dz
-					if nx < 0 or nx >= grid_width or nz < 0 or nz >= grid_depth:
-						continue
-					var neighbor := grid_points[nx + nz * grid_width]
-					var r_n = grid_radii[nx + nz * grid_width]
-					if neighbor != Vector3.INF and neighbor.distance_squared_to(point) < maxf(point_radius ** 2, r_n ** 2):
-						can_place = false
+			for attempt in range(MAX_POINT_ATTEMPTS):
+				var angle := random.randf_range(0, TAU)
+				point = current + (Vector3(cos(angle), 0.0, sin(angle)) * maxf(point_radius, current_radius) * sqrt(random.randf_range(1.0, 4.0)))
+				
+				var ix := floori((point.x - grid_min.x) / grid_size)
+				var iz := floori((point.z - grid_min.z) / grid_size)
+				if ix < 0 or ix >= grid_width or iz < 0 or iz >= grid_depth or grid_points[ix + iz * grid_width] != Vector3.INF:
+					continue
+				
+				var cell_range = ceili(max_radius_overall / grid_size)
+				
+				var can_place = true
+				for dx in range(-cell_range, cell_range + 1):
+					for dz in range(-cell_range, cell_range + 1):
+						var nx := ix + dx
+						var nz := iz + dz
+						if nx < 0 or nx >= grid_width or nz < 0 or nz >= grid_depth:
+							continue
+						var neighbor := grid_points[nx + nz * grid_width]
+						var r_n = grid_radii[nx + nz * grid_width]
+						if neighbor != Vector3.INF and neighbor.distance_squared_to(point) < maxf(point_radius ** 2, r_n ** 2):
+							can_place = false
+							break
+					if not can_place:
 						break
+				
 				if not can_place:
-					break
+					continue
 			
-			if not can_place:
+				grid_points[ix + iz * grid_width] = point
+				grid_radii[ix + iz * grid_width] = point_radius
+				active_points.append(point)
+				active_radii.append(point_radius)
+				placed = true
+				break
+			
+			if not placed:
+				active_points.remove_at(idx)
+				active_radii.remove_at(idx)
 				continue
-			
-			grid_points[ix + iz * grid_width] = point
-			grid_radii[ix + iz * grid_width] = point_radius
-			active_points.append(point)
-			active_radii.append(point_radius)
-			placed = true
-			break
-		
-		if not placed:
-			active_points.remove_at(idx)
-			active_radii.remove_at(idx)
-			continue
-		
+		elif sampling_algorithm == SamplingAlgorithm.RANDOM:
+			point = Vector3(scatter_region.x * random.randf_range(-1, 1), 0, scatter_region.z * random.randf_range(-1, 1))
 		
 		# Intersect ray with source triangle mesh
 		var raycast: Dictionary = source_triangle_mesh.intersect_ray(
@@ -322,11 +345,23 @@ func bake() -> void:
 	_is_baking = false
 
 
+## Clears the baked data (transforms, indices, seed). Does not touch spawned
+## RIDs — use _despawn_instances() for that. After clearing, has_bake() returns
+## false and the next generate() rebuilds from scratch.
+func clear_bake() -> void:
+	if not is_instance_valid(baked_data):
+		return
+	baked_data.prototypes = []
+	baked_data.transforms = []
+	baked_data.collision_shapes = []
+	baked_data.random_seed = -1
+
+
 ## Reload instances from cache.
 func reload_instances() -> void:
+	_despawn_instances.call_deferred()
 	if is_baking() or not is_baked():
 		return
-	_despawn_instances.call_deferred()
 	_spawn_instances.call_deferred()
 
 
@@ -345,18 +380,6 @@ func is_baking() -> bool:
 ## RenderingServer and PhysicsServer. Does not imply has_bake() by itself.
 func has_instances() -> bool:
 	return not _instances.is_empty()
-
-
-## Clears the baked data (transforms, indices, seed). Does not touch spawned
-## RIDs — use _despawn_instances() for that. After clearing, has_bake() returns
-## false and the next generate() rebuilds from scratch.
-func clear_bake() -> void:
-	if not is_instance_valid(baked_data):
-		return
-	baked_data.prototypes = []
-	baked_data.transforms = []
-	baked_data.collision_shapes = []
-	baked_data.random_seed = -1
 
 
 func _spawn_instances() -> void:
@@ -448,8 +471,6 @@ func _spawn_instances() -> void:
 			)
 
 
-## Clear all instances, but keep cache. See
-## [method clear_bake()]
 func _despawn_instances() -> void:
 	for i in _instances:
 		RenderingServer.free_rid.call_deferred(i)
