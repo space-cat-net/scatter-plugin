@@ -2,8 +2,6 @@
 @icon('res://addons/scatter/assets/scatter.svg')
 class_name Scatter3D
 extends Node3D
-
-
 ## Procedural scatter node for placing meshes on a surface using Poisson disk sampling.
 ##
 ## Samples points across [member scatter_size], applies per-prototype filters,
@@ -15,6 +13,19 @@ extends Node3D
 ## Run [method generate] from the editor to bake; instances spawn automatically
 ## on [code]_enter_tree[/code] and are freed on [code]_exit_tree[/code].
 
+## Emmited when [method bake] is finished.
+signal bake_finished()
+
+## Emmited when all instances are spawned.
+signal instances_spawned()
+
+## Point generation strategy used during baking.
+enum SamplingAlgorithm {
+## Bridson's algorithm: evenly spaced points respecting per-prototype radii, no clumping. Slower but visually natural.
+	POISSON_DISK,
+## uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
+	RANDOM
+}
 
 ## Max attempts per point in Poisson Disk Sampling
 const MAX_POINT_ATTEMPTS = 32
@@ -25,16 +36,7 @@ const MAX_POINT_ATTEMPTS = 32
 ## Editor-only; not used at runtime.
 const BAKE_FRAME_BUDGET_MS := 64
 
-## Point generation strategy used during baking.
-enum SamplingAlgorithm {
-## Bridson's algorithm: evenly spaced points respecting per-prototype radii, no clumping. Slower but visually natural.
-	POISSON_DISK,
-## uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
-	RANDOM
-}
-
-
-#region Properties
+#region Export Variables
 ## List of instance types Scatter3D will generate.
 ## Types define generation rules, visual and physical properties of instance .
 @export var prototypes: Array[ScatterPrototype]
@@ -84,9 +86,6 @@ var _is_baking: bool = false
 func _enter_tree() -> void:
 	_spawn_instances()
 
-# Called when the node is about to leave the SceneTree.
-func _exit_tree() -> void:
-	_despawn_instances()
 
 # Called when the object receives a notification.
 func _notification(what: int) -> void:
@@ -99,12 +98,17 @@ func _notification(what: int) -> void:
 		_despawn_instances()
 
 
+# Called when the node is about to leave the SceneTree.
+func _exit_tree() -> void:
+	_despawn_instances()
+
+
 ## Bake scatter and save data.
-func bake() -> void:
+func bake() -> Error:
 	# Getting source mesh
 	if not is_instance_valid(get_parent()) or \
 		not get_parent() is MeshInstance3D or not is_instance_valid(get_parent().mesh):
-		return
+		return FAILED
 	var source_mesh_instance: MeshInstance3D = get_parent() as MeshInstance3D
 	
 	var time = Time.get_ticks_msec()
@@ -162,7 +166,7 @@ func bake() -> void:
 		else:
 			push_error('Failed to bake Scatter3D - found invalid prototypes')
 			_is_baking = false
-			return
+			return FAILED
 	
 	await get_tree().process_frame
 	
@@ -322,27 +326,18 @@ func bake() -> void:
 		baked_data.prototypes.append(prototype_index)
 		baked_data.transforms.append(xform)
 	
-	if baked_data.transforms.size() == 0:
-		clear_bake()
-		if Engine.is_editor_hint() and Time.get_ticks_msec() - time > 200:
-			EditorInterface.get_editor_toaster().push_toast(
-				'Bake failed',
-				EditorToaster.SEVERITY_ERROR,
-			)
+	
+	# Clear baking status
+	_is_baking = false
 	
 	await get_tree().process_frame
 	
+	# Spawn generated instances
 	_spawn_instances()
 	
-	await get_tree().process_frame
-	
-	if Engine.is_editor_hint() and Time.get_ticks_msec() - time > 200:
-		EditorInterface.get_editor_toaster().push_toast(
-			'Baked successfully in ' + str(snappedf((Time.get_ticks_msec() - time) * 0.001, 0.01)) + ' s with ' + str(baked_data.transforms.size()) + ' instances.',
-			EditorToaster.SEVERITY_INFO
-		)
-	
-	_is_baking = false
+	# Emit signal
+	bake_finished.emit()
+	return OK
 
 
 ## Clears the baked data (transforms, indices, seed). Does not touch spawned
@@ -385,11 +380,7 @@ func has_instances() -> bool:
 func _spawn_instances() -> void:
 	# Clear previous instances
 	_despawn_instances()
-	if not visible:
-		return
-	
-	# Error when populating before generation
-	if not is_instance_valid(baked_data) or baked_data.is_empty:
+	if not visible or not is_baked() or is_baking():
 		return
 	
 	# Generate body
@@ -469,6 +460,9 @@ func _spawn_instances() -> void:
 				baked_data.collision_shapes[prototype_index],
 				baked_data.transforms[i]
 			)
+	
+	# Emit signal
+	instances_spawned.emit()
 
 
 func _despawn_instances() -> void:

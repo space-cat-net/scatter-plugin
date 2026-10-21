@@ -2,8 +2,6 @@
 @icon('res://addons/scatter/assets/scatter_instance_cache.svg')
 class_name ScatterData
 extends Resource
-
-
 ## Baked output of [Scatter3D] generation.
 ##
 ## Stores instance transforms, per-instance type indices, and the seed used for
@@ -12,7 +10,6 @@ extends Resource
 ## [code]_enter_tree[/code] to spawn RIDs without re-running Poisson disk sampling.
 ##
 ## Created by [method Scatter3D.generate]. Do not edit manually.
-
 
 # Per-instance cache
 @export_storage var transforms: Array[Transform3D]
@@ -57,6 +54,7 @@ func _get_property_list() -> Array[Dictionary]:
 	)
 	
 	return prop
+
 
 func _get(property: StringName) -> Variant:
 	if property == &'instance_count':

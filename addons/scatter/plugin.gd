@@ -65,7 +65,23 @@ func _on_bake_button_pressed() -> void:
 	if not _is_selected_scatter_valid():
 		return
 	
-	selected_scatter.bake()
+	var time = Time.get_ticks_msec()
+	
+	var err = await selected_scatter.bake()
+	
+	if not is_instance_valid(selected_scatter):
+		return
+	
+	if err == OK and Engine.is_editor_hint() and Time.get_ticks_msec() - time > 200:
+		EditorInterface.get_editor_toaster().push_toast(
+			'Baked successfully in ' + str(snappedf((Time.get_ticks_msec() - time) * 0.001, 0.01)) + ' s with ' + str(selected_scatter.baked_data.transforms.size()) + ' instances',
+			EditorToaster.SEVERITY_INFO
+		)
+	else:
+		EditorInterface.get_editor_toaster().push_toast(
+			'Bake failed',
+			EditorToaster.SEVERITY_ERROR
+		)
 
 
 func _on_reload_button_pressed() -> void:

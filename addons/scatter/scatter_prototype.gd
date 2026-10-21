@@ -2,15 +2,12 @@
 @icon('res://addons/scatter/assets/scatter_instance_type.svg')
 class_name ScatterPrototype
 extends Resource
-
-
 ## Describes one type of instance scattered by [Scatter3D].
 ##
 ## Holds the visual mesh, optional collision shape, Poisson disk radius range,
 ## selection weight, and per-type filters (surface normal, height, density mask).
 ## One [Scatter3D] can have multiple prototypes to scatter a mix of objects -
 ## grass, rocks, trees, etc. - with different spacing and appearance rules.
-
 
 enum CollisionShapeMode {
 	## Do not generate collision for instance.
