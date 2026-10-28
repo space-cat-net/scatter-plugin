@@ -467,10 +467,10 @@ func _spawn_instances() -> void:
 
 func _despawn_instances() -> void:
 	for i in _instances:
-		RenderingServer.free_rid.call_deferred(i)
+		RenderingServer.free_rid(i)
 	
 	for i in _colliders + _bodies:
-		PhysicsServer3D.free_rid.call_deferred(i)
+		PhysicsServer3D.free_rid(i)
 	
 	_instances = []
 	_colliders = []
