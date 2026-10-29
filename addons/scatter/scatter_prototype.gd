@@ -90,6 +90,9 @@ var visibility_range_end_margin: float = 0.0
 ## Maximum Poisson disk radius in meters. Each instance's radius is sampled
 ## uniformly in [min_radius, max_radius].
 @export_range(0.01, 100, 0.001, 'or_greater', 'suffix:m') var max_radius: float = 1.0
+## 0 = keep world up (trees, grass), 1 = fully align to surface normal (rocks,
+## decals). Values in between blend the two orientations.
+@export_range(0.0, 1.0) var normal_alignment: float = 0.0
 @export_subgroup('Normal Filter', 'normal_filtering_')
 ## Enables normal filtering, so instances can't generate on
 ## steep surfaces, For example, don't spawn trees on

@@ -22,7 +22,7 @@ extends Resource
 @export_storage var random_seed: int = -1
 @export_storage var is_empty: bool = true:
 	get():
-		return transforms.is_empty()
+		return transforms.is_empty() or prototypes.size() != transforms.size()
 
 
 func _get_property_list() -> Array[Dictionary]:
@@ -62,3 +62,11 @@ func _get(property: StringName) -> Variant:
 	if property == &'seed':
 		return str(seed)
 	return
+
+
+## Clears the baked data (transforms, indices, seed).
+func clear() -> void:
+	prototypes = []
+	transforms = []
+	collision_shapes = []
+	random_seed = -1

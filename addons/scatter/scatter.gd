@@ -134,7 +134,6 @@ func bake() -> Error:
 	
 	# Clear cache and remove instances
 	_despawn_instances()
-	clear_bake()
 	
 	if baked_data == null:
 		baked_data = ScatterData.new()
@@ -150,6 +149,10 @@ func bake() -> Error:
 	
 	var min_radius_overall: float = INF
 	var max_radius_overall: float = 0
+	
+	var result_transforms: Array[Transform3D]
+	var result_prototypes: PackedInt32Array
+	var result_collision_shapes: Array[Shape3D]
 	
 	for index in range(prototypes.size()):
 		if is_instance_valid(prototypes[index]):
@@ -181,7 +184,7 @@ func bake() -> Error:
 			elif prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.CUSTOM:
 				shape = prototype.collision_shape
 			
-			baked_data.collision_shapes.append(shape)
+			result_collision_shapes.append(shape)
 		else:
 			push_error('Failed to bake Scatter3D - found invalid prototypes')
 			_is_baking = false
@@ -195,8 +198,6 @@ func bake() -> Error:
 	random.seed = random_seed
 	if random_seed == -1:
 		random.seed = randi()
-	
-	baked_data.random_seed = random.seed
 	
 	# Define variables
 	var frame_start: float = Time.get_ticks_msec()
@@ -224,7 +225,7 @@ func bake() -> Error:
 	var active_point: Vector3
 	
 	# Main generation loop
-	while not active_points.is_empty() and baked_data.transforms.size() < max_instances:
+	while not active_points.is_empty() and result_transforms.size() < max_instances:
 		# Await next frame. if frame is too long.
 		if Time.get_ticks_msec() - frame_start > BAKE_FRAME_BUDGET_MS:
 			await get_tree().process_frame
@@ -329,45 +330,36 @@ func bake() -> Error:
 			continue
 		
 		# Transform generation
-		var xform: Transform3D = Transform3D(source_mesh_instance.global_basis, projected_position)
-		xform = xform.translated_local(prototype.position_offset)
-		xform = xform.scaled_local(
-			Vector3.ONE
-			 * (
-				prototype.base_scale
-				 + (random.randf_range(-1, 1) * prototype.random_scale)
-			)
-		)
+		var target_normal: Vector3 = Vector3.UP.lerp(raycast.normal, prototype.normal_alignment).normalized()
+		var base_basis: Basis = Basis(Quaternion(Vector3.UP, target_normal))
+		var xform: Transform3D = Transform3D(base_basis, projected_position)
 		xform = xform.rotated_local(Vector3.UP, random.randf_range(-1, 1) * prototype.random_rotation)
 		xform = xform.rotated_local(Vector3.RIGHT, random.randf_range(-1, 1) * prototype.random_tilt)
-		xform = xform.rotated_local(Vector3.BACK, random.randf_range(-1, 1) * prototype.random_tilt)
-		baked_data.prototypes.append(prototype_index)
-		baked_data.transforms.append(xform)
+		xform = xform.rotated_local(Vector3.BACK,  random.randf_range(-1, 1) * prototype.random_tilt)
+		var scale_val: float = prototype.base_scale + random.randf_range(-1, 1) * prototype.random_scale
+		scale_val = maxf(scale_val, 0.001)
+		xform = xform.scaled_local(Vector3.ONE * scale_val)
+		xform = xform.translated_local(prototype.position_offset)
+		
+		result_prototypes.append(prototype_index)
+		result_transforms.append(xform)
 	
+	# Save results to ScatterData
+	baked_data.clear()
+	baked_data.random_seed = random.seed
+	baked_data.collision_shapes = result_collision_shapes
+	baked_data.prototypes = result_prototypes
+	baked_data.transforms = result_transforms
 	
 	# Clear baking status
 	_is_baking = false
 	
-	await get_tree().process_frame
-	
 	# Spawn generated instances
 	_spawn_instances()
 	
-	# Emit signal
+	# Emit signal and return OK
 	bake_finished.emit()
 	return OK
-
-
-## Clears the baked data (transforms, indices, seed). Does not touch spawned
-## RIDs — use _despawn_instances() for that. After clearing, has_bake() returns
-## false and the next generate() rebuilds from scratch.
-func clear_bake() -> void:
-	if not is_instance_valid(baked_data):
-		return
-	baked_data.prototypes = []
-	baked_data.transforms = []
-	baked_data.collision_shapes = []
-	baked_data.random_seed = -1
 
 
 ## Reload instances from cache.
