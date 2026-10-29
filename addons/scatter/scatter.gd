@@ -84,6 +84,7 @@ var _instances: Array[RID]
 var _colliders: Array[RID]
 var _bodies: Array[RID]
 var _is_baking: bool = false
+var _abort_spawning: bool = false
 
 
 # Called when the node enters the SceneTree.
@@ -95,7 +96,7 @@ func _enter_tree() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED:
 		if visible:
-			_spawn_instances()
+			_spawn_instances.call_deferred()
 		else:
 			_despawn_instances()
 	elif what == NOTIFICATION_PREDELETE:
@@ -109,6 +110,8 @@ func _exit_tree() -> void:
 
 ## Bake scatter and save data.
 func bake() -> Error:
+	if is_baking():
+		return FAILED
 	# Getting source mesh
 	if not is_instance_valid(get_parent()) or \
 		not get_parent() is MeshInstance3D or not is_instance_valid(get_parent().mesh):
@@ -125,6 +128,7 @@ func bake() -> Error:
 		baked_data = ScatterData.new()
 	
 	_is_baking = true
+	_abort_spawning = true
 	
 	var source_mesh: Mesh = source_mesh_instance.mesh
 	var source_triangle_mesh: TriangleMesh = source_mesh.generate_triangle_mesh()
@@ -170,6 +174,7 @@ func bake() -> Error:
 		else:
 			push_error('Failed to bake Scatter3D - found invalid prototypes')
 			_is_baking = false
+			_abort_spawning = false
 			return FAILED
 	
 	await get_tree().process_frame
@@ -332,6 +337,7 @@ func bake() -> Error:
 	
 	# Clear baking status
 	_is_baking = false
+	_abort_spawning = false
 	
 	await get_tree().process_frame
 	
@@ -381,9 +387,7 @@ func has_instances() -> bool:
 
 
 func _spawn_instances() -> void:
-	# Clear previous instances
-	_despawn_instances()
-	if not visible or not is_baked() or is_baking():
+	if not visible or not is_baked() or is_baking() or _abort_spawning:
 		return
 	
 	# Generate body
@@ -406,6 +410,8 @@ func _spawn_instances() -> void:
 	
 	# Main population loop
 	for i in range(len(baked_data.transforms)):
+		if _abort_spawning:
+			return
 		if frame_budget > 0 and Time.get_ticks_msec() - frame_start > frame_budget:
 			await get_tree().process_frame
 			frame_start = Time.get_ticks_msec()
@@ -472,6 +478,7 @@ func _spawn_instances() -> void:
 
 
 func _despawn_instances() -> void:
+	_abort_spawning = true
 	for i in _instances:
 		RenderingServer.free_rid(i)
 	
@@ -481,3 +488,4 @@ func _despawn_instances() -> void:
 	_instances = []
 	_colliders = []
 	_bodies = []
+	_abort_spawning = false
