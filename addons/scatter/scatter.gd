@@ -49,7 +49,7 @@ const BAKE_FRAME_BUDGET_MS: int = 64
 ## Runtime spawn uses [member spawn_frame_budget_ms] instead. Keeps the editor
 ## smooth while instances appear progressively. Editor-only.
 ## 4 ms leaves ~70% of a 60 FPS frame for the editor to redraw.
-const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 4
+const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 
 
 #region Export Variables
@@ -97,7 +97,6 @@ var _colliders: Array[RID]
 var _bodies: Array[RID]
 var _is_baking: bool = false
 var _is_spawning: bool = false
-var _abort_spawning: bool = false
 
 
 # Called when the node enters the SceneTree.
@@ -141,7 +140,6 @@ func bake() -> Error:
 		baked_data = ScatterData.new()
 	
 	_is_baking = true
-	_abort_spawning = true
 	
 	var source_mesh: Mesh = source_mesh_instance.mesh
 	var source_triangle_mesh: TriangleMesh = source_mesh.generate_triangle_mesh()
@@ -187,7 +185,6 @@ func bake() -> Error:
 		else:
 			push_error('Failed to bake Scatter3D - found invalid prototypes')
 			_is_baking = false
-			_abort_spawning = false
 			return FAILED
 	
 	await get_tree().process_frame
@@ -229,11 +226,9 @@ func bake() -> Error:
 	# Main generation loop
 	while not active_points.is_empty() and baked_data.transforms.size() < max_instances:
 		# Await next frame. if frame is too long.
-		var ticks_msec = Time.get_ticks_msec()
-		if ticks_msec - frame_start > BAKE_FRAME_BUDGET_MS:
+		if Time.get_ticks_msec() - frame_start > BAKE_FRAME_BUDGET_MS:
 			await get_tree().process_frame
-			frame_start = ticks_msec
-		
+			frame_start = Time.get_ticks_msec()
 		# Find type
 		var prototype_index = type_indixes[random.rand_weighted(_weights)]
 		var prototype = prototypes[prototype_index]
@@ -352,7 +347,6 @@ func bake() -> Error:
 	
 	# Clear baking status
 	_is_baking = false
-	_abort_spawning = false
 	
 	await get_tree().process_frame
 	
@@ -412,7 +406,7 @@ func has_instances() -> bool:
 
 
 func _spawn_instances() -> void:
-	if not visible or not is_baked() or is_baking() or _abort_spawning:
+	if not visible or not is_baked() or is_baking():
 		return
 	
 	_is_spawning = true
@@ -438,13 +432,9 @@ func _spawn_instances() -> void:
 	
 	# Main population loop
 	for i in range(len(baked_data.transforms)):
-		if _abort_spawning:
-			_is_spawning = false
-			return
-		var ticks_msec = Time.get_ticks_msec()
-		if frame_budget > 0 and ticks_msec - frame_start > frame_budget:
+		if frame_budget > 0 and Time.get_ticks_msec() - frame_start > frame_budget:
 			await get_tree().process_frame
-			frame_start = ticks_msec
+			frame_start = Time.get_ticks_msec()
 		
 		var prototype_index: int = baked_data.prototypes[i]
 		var prototype = prototypes[prototype_index]
@@ -498,7 +488,7 @@ func _spawn_instances() -> void:
 				or not is_instance_valid(baked_data.collision_shapes[prototype_index])
 				or not _bodies[prototype_index].is_valid()
 			):
-			return
+			continue
 		PhysicsServer3D.body_add_shape(
 			_bodies[prototype_index],
 			baked_data.collision_shapes[prototype_index],
@@ -511,7 +501,6 @@ func _spawn_instances() -> void:
 
 
 func _despawn_instances() -> void:
-	_abort_spawning = true
 	for i in _instances:
 		RenderingServer.free_rid(i)
 	
@@ -521,4 +510,3 @@ func _despawn_instances() -> void:
 	_instances = []
 	_colliders = []
 	_bodies = []
-	_abort_spawning = false
