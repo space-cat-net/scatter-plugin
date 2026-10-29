@@ -45,3 +45,5 @@ This separates expensive baking (seconds) from scene loading (must be fast).
 
 A demo scene is included at `test_scene/test.tscn` - a 400×400 m forest generated with `Scatter3D`,
 with a first-person character to walk through it.
+
+Used assets from [Platformer Kit](https://kenney.nl/assets/platformer-kit).
