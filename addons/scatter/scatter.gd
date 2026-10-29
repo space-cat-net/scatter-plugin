@@ -466,6 +466,7 @@ func _spawn_instances() -> void:
 				prototype.collision_shape_mode != ScatterPrototype.CollisionShapeMode.DISABLED
 				and _bodies[prototype_index].is_valid()
 				and is_instance_valid(baked_data.collision_shapes[prototype_index])
+				and not Engine.is_editor_hint()
 			):
 			PhysicsServer3D.body_add_shape.call_deferred(
 				_bodies[prototype_index],
