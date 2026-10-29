@@ -23,10 +23,14 @@ signal spawn_finished()
 
 ## Point generation strategy used during baking.
 enum SamplingAlgorithm {
-## Bridson's algorithm: evenly spaced points respecting per-prototype radii, no clumping. Slower but visually natural.
+	## Bridson's algorithm: evenly spaced points respecting per-prototype radii, no clumping. Slower but visually natural.
 	POISSON_DISK,
-## uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
-	RANDOM
+	## Uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
+	RANDOM,
+	## Regular grid with per-prototype random offsets. Faster than POISSON_DISK,
+	## more uniform than RANDOM, but no minimum-spacing guarantee — prototypes
+	## with large offsets can overlap with neighbors. See [member ScatterPrototype.position_jitter]
+	GRID
 }
 
 
@@ -62,6 +66,9 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 ## selected algorithm (radius range, tries, density) are read from
 ## [member prototypes] and Scatter3D's own settings.
 @export var sampling_algorithm: SamplingAlgorithm = SamplingAlgorithm.POISSON_DISK
+## Grid size for [enum SamplingAlgorithm.GRID]. This property doesn't affect
+## grid of Bridson algorythm.
+@export_range(0, 100, 0.001, 'suffix:m', 'or_greater') var scatter_grid_size: float = 1.0
 ## Random generation seed. Changing this
 ## invalidates [member baked_data]; press Bake to rebuild.
 @export_range(-1, 1, 1, 'or_greater', 'hide_control') var random_seed: int = -1
@@ -201,6 +208,8 @@ func bake() -> Error:
 	
 	# Define variables
 	var frame_start: float = Time.get_ticks_msec()
+	var spawn_grid_idx: int = 0
+	var spawn_grid_total: int = int(scatter_region.x / scatter_grid_size) * int(scatter_region.z / scatter_grid_size)
 	var scatter_to_mesh: Transform3D = (
 		source_mesh_instance.global_transform.affine_inverse() * global_transform
 	)
@@ -285,6 +294,18 @@ func bake() -> Error:
 				continue
 		elif sampling_algorithm == SamplingAlgorithm.RANDOM:
 			point = Vector3(scatter_region.x * random.randf_range(-1, 1), 0, scatter_region.z * random.randf_range(-1, 1))
+		elif sampling_algorithm == SamplingAlgorithm.GRID:
+			spawn_grid_idx += 1
+			var col := int(spawn_grid_idx) % int(scatter_region.x / scatter_grid_size)
+			var row := int(float(spawn_grid_idx) / (scatter_region.x / scatter_grid_size))
+			
+			var px := -half_boundaries.x + (col + 0.5) * scatter_grid_size
+			var pz := -half_boundaries.z + (row + 0.5) * scatter_grid_size
+			point = Vector3(px, 0, pz)
+			if spawn_grid_idx >= spawn_grid_total:
+				break
+		
+		point += prototype.position_jitter * Vector3(random.randf_range(-1, 1), random.randf_range(-1, 1), random.randf_range(-1, 1))
 		
 		# Intersect ray with source triangle mesh
 		var raycast: Dictionary = source_triangle_mesh.intersect_ray(
