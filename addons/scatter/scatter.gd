@@ -424,7 +424,7 @@ func _spawn_instances() -> void:
 			PhysicsServer3D.body_set_collision_mask(_bodies[prototype_index], prototypes[prototype_index].collision_mask)
 	
 	# Define variables
-	var world_3d = get_world_3d()
+	var scenario = get_world_3d().scenario
 	var frame_start: float = 0
 	var frame_budget = frame_budget_ms
 	if Engine.is_editor_hint():
@@ -442,41 +442,15 @@ func _spawn_instances() -> void:
 		if not is_instance_valid(prototype) or not is_instance_valid(prototype.mesh):
 			continue
 		
-		# Creating and vonfiguring instance.
+		# Create and configure instance
 		var instance: RID = RenderingServer.instance_create()
-		RenderingServer.instance_set_scenario(instance, world_3d.scenario)
-		RenderingServer.instance_set_base(instance, prototype.mesh)
-		
-		RenderingServer.instance_set_transform(instance, baked_data.transforms[i])
-		RenderingServer.instance_set_visibility_parent(instance, self)
-		
-		RenderingServer.instance_set_layer_mask(instance, prototype.layers)
-		RenderingServer.instance_attach_object_instance_id(instance, get_instance_id())
-		RenderingServer.instance_geometry_set_cast_shadows_setting(instance, prototype.cast_shadow)
-		RenderingServer.instance_geometry_set_lod_bias(instance, prototype.lod_bias)
-		
-		RenderingServer.instance_geometry_set_flag(
+		_configure_instance_rendering.call_deferred(
 			instance,
-			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_BAKED_LIGHT,
-			prototype.gi_mode == GeometryInstance3D.GIMode.GI_MODE_STATIC
+			prototype,
+			baked_data.transforms[i],
+			scenario,
+			get_instance_id()
 		)
-		RenderingServer.instance_geometry_set_flag(
-			instance,
-			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_DYNAMIC_GI,
-			prototype.gi_mode == GeometryInstance3D.GIMode.GI_MODE_DYNAMIC
-		)
-		
-		RenderingServer.instance_geometry_set_visibility_range(
-			instance,
-			prototype.visibility_range_begin,
-			prototype.visibility_range_end,
-			prototype.visibility_range_begin_margin,
-			prototype.visibility_range_end_margin,
-			prototype.visibility_range_fade_mode,
-		)
-		
-		if prototype.custom_aabb.has_volume():
-			RenderingServer.instance_set_custom_aabb(instance, prototype.custom_aabb)
 		
 		# Append instance
 		_instances.append(instance)
@@ -510,3 +484,25 @@ func _despawn_instances() -> void:
 	_instances = []
 	_colliders = []
 	_bodies = []
+
+
+func _configure_instance_rendering(instance: RID, prototype: ScatterPrototype, xform: Transform3D, _populate_scenario: RID, _populate_object_id: int) -> void:
+	var rs := RenderingServer
+	rs.instance_set_scenario(instance, _populate_scenario)
+	rs.instance_set_base(instance, prototype.mesh)
+	rs.instance_set_transform(instance, xform)
+	rs.instance_set_visibility_parent(instance, self)
+	rs.instance_set_layer_mask(instance, prototype.layers)
+	rs.instance_attach_object_instance_id(instance, _populate_object_id)
+	rs.instance_geometry_set_cast_shadows_setting(instance, prototype.cast_shadow)
+	rs.instance_geometry_set_lod_bias(instance, prototype.lod_bias)
+	rs.instance_geometry_set_flag(instance, RenderingServer.INSTANCE_FLAG_USE_BAKED_LIGHT,
+		prototype.gi_mode == GeometryInstance3D.GI_MODE_STATIC)
+	rs.instance_geometry_set_flag(instance, RenderingServer.INSTANCE_FLAG_USE_DYNAMIC_GI,
+		prototype.gi_mode == GeometryInstance3D.GI_MODE_DYNAMIC)
+	rs.instance_geometry_set_visibility_range(instance,
+		prototype.visibility_range_begin, prototype.visibility_range_end,
+		prototype.visibility_range_begin_margin, prototype.visibility_range_end_margin,
+		prototype.visibility_range_fade_mode)
+	if prototype.custom_aabb.has_volume():
+		rs.instance_set_custom_aabb(instance, prototype.custom_aabb)

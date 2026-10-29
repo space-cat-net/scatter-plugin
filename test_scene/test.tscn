@@ -201,7 +201,7 @@ script/source = "extends Label
 
 
 func _process(_delta: float) -> void:
-	text = 'FPS: %.0f (%.2f ms)' % [Engine.get_frames_per_second(), 1000 / Engine.get_frames_per_second()]
+	text = 'FPS: %.0f (%.0f ms)' % [Engine.get_frames_per_second(), 1000 / Engine.get_frames_per_second()]
 "
 
 [node name="Test" type="Node3D" unique_id=429221623]
