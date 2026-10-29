@@ -13,11 +13,13 @@ extends Node3D
 ## Run [method generate] from the editor to bake; instances spawn automatically
 ## on [code]_enter_tree[/code] and are freed on [code]_exit_tree[/code].
 
+
 ## Emmited when [method bake] is finished.
 signal bake_finished()
 
 ## Emmited when all instances are spawned.
-signal instances_spawned()
+signal spawn_finished()
+
 
 ## Point generation strategy used during baking.
 enum SamplingAlgorithm {
@@ -27,17 +29,27 @@ enum SamplingAlgorithm {
 	RANDOM
 }
 
-## Max attempts per point in Poisson Disk Sampling
-const MAX_POINT_ATTEMPTS = 32
 
-## Max time (ms) spent on baking per frame. When exceeded, the generator yields
-## via `await get_tree().process_frame` and resumes next frame, keeping the
-## editor responsive during long bakes (tens of thousands of points).
-## Editor-only; not used at runtime.
-const BAKE_FRAME_BUDGET_MS := 64
+## Bridson's k: number of candidate attempts per active point before it is
+## retired. Higher values fill gaps more thoroughly at the cost of extra work;
+## 30 is the value recommended in Bridson's original paper and a good default.
+## Only used when [member sampling_algorithm] is POISSON_DISK.
+const BRIDSON_K: int = 30
 
-## Max time (ms) for instance creation per frame during spawn in editor.
-const EDITOR_FRAME_BUDGET := 4
+## Per-frame time budget (ms) for the bake loop. When exceeded, the generator
+## yields to the next frame via `await get_tree().process_frame`, keeping the
+## editor responsive during long bakes. Higher = faster total bake, choppier
+## editor; lower = smoother, slower. Editor-only; not used at runtime.
+## 64 ms ≈ 15 FPS during baking — acceptable for a blocking operation behind a
+## progress dialog, and gives a meaningful speedup over smaller budgets.
+const BAKE_FRAME_BUDGET_MS: int = 64
+
+## Per-frame time budget (ms) for spawning RIDs in the editor. Applied only
+## when populate runs in editor context (after Generate, scene reload, etc.).
+## Runtime spawn uses [member spawn_frame_budget_ms] instead. Keeps the editor
+## smooth while instances appear progressively. Editor-only.
+## 4 ms leaves ~70% of a 60 FPS frame for the editor to redraw.
+const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 4
 
 
 #region Export Variables
@@ -84,6 +96,7 @@ var _instances: Array[RID]
 var _colliders: Array[RID]
 var _bodies: Array[RID]
 var _is_baking: bool = false
+var _is_spawning: bool = false
 var _abort_spawning: bool = false
 
 
@@ -96,7 +109,7 @@ func _enter_tree() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_VISIBILITY_CHANGED:
 		if visible:
-			_spawn_instances.call_deferred()
+			_spawn_instances()
 		else:
 			_despawn_instances()
 	elif what == NOTIFICATION_PREDELETE:
@@ -215,9 +228,11 @@ func bake() -> Error:
 	
 	# Main generation loop
 	while not active_points.is_empty() and baked_data.transforms.size() < max_instances:
-		if Time.get_ticks_msec() - frame_start > BAKE_FRAME_BUDGET_MS:
+		# Await next frame. if frame is too long.
+		var ticks_msec = Time.get_ticks_msec()
+		if ticks_msec - frame_start > BAKE_FRAME_BUDGET_MS:
 			await get_tree().process_frame
-			frame_start = Time.get_ticks_msec()
+			frame_start = ticks_msec
 		
 		# Find type
 		var prototype_index = type_indixes[random.rand_weighted(_weights)]
@@ -232,7 +247,7 @@ func bake() -> Error:
 			var current_radius: float = active_radii[idx]
 			var placed: bool = false
 			
-			for attempt in range(MAX_POINT_ATTEMPTS):
+			for attempt in range(BRIDSON_K):
 				var angle := random.randf_range(0, TAU)
 				point = current + (Vector3(cos(angle), 0.0, sin(angle)) * maxf(point_radius, current_radius) * sqrt(random.randf_range(1.0, 4.0)))
 				
@@ -380,8 +395,18 @@ func is_baking() -> bool:
 	return _is_baking
 
 
-## Returns true if RIDs for the current bake are currently spawned in the
-## RenderingServer and PhysicsServer. Does not imply has_bake() by itself.
+## Returns true if Scatter3D had finished spawning instances.
+func is_spawned():
+	return has_instances() and not _is_spawning
+
+
+## Returns true if Scatter3D is currently spawning instances.
+func is_spawning() -> bool:
+	return _is_spawning
+
+
+## Returns true if any RIDs for the current bake are currently spawned in the
+## RenderingServer and PhysicsServer.
 func has_instances() -> bool:
 	return not _instances.is_empty()
 
@@ -389,6 +414,8 @@ func has_instances() -> bool:
 func _spawn_instances() -> void:
 	if not visible or not is_baked() or is_baking() or _abort_spawning:
 		return
+	
+	_is_spawning = true
 	
 	# Generate body
 	_bodies = []
@@ -403,18 +430,21 @@ func _spawn_instances() -> void:
 			PhysicsServer3D.body_set_collision_mask(_bodies[prototype_index], prototypes[prototype_index].collision_mask)
 	
 	# Define variables
+	var world_3d = get_world_3d()
 	var frame_start: float = 0
 	var frame_budget = frame_budget_ms
 	if Engine.is_editor_hint():
-		frame_budget = EDITOR_FRAME_BUDGET
+		frame_budget = EDITOR_SPAWN_FRAME_BUDGET_MS
 	
 	# Main population loop
 	for i in range(len(baked_data.transforms)):
 		if _abort_spawning:
+			_is_spawning = false
 			return
-		if frame_budget > 0 and Time.get_ticks_msec() - frame_start > frame_budget:
+		var ticks_msec = Time.get_ticks_msec()
+		if frame_budget > 0 and ticks_msec - frame_start > frame_budget:
 			await get_tree().process_frame
-			frame_start = Time.get_ticks_msec()
+			frame_start = ticks_msec
 		
 		var prototype_index: int = baked_data.prototypes[i]
 		var prototype = prototypes[prototype_index]
@@ -424,7 +454,7 @@ func _spawn_instances() -> void:
 		
 		# Creating and vonfiguring instance.
 		var instance: RID = RenderingServer.instance_create()
-		RenderingServer.instance_set_scenario(instance, get_world_3d().scenario)
+		RenderingServer.instance_set_scenario(instance, world_3d.scenario)
 		RenderingServer.instance_set_base(instance, prototype.mesh)
 		
 		RenderingServer.instance_set_transform(instance, baked_data.transforms[i])
@@ -463,19 +493,21 @@ func _spawn_instances() -> void:
 		
 		# Adding collision shape
 		if (
-				prototype.collision_shape_mode != ScatterPrototype.CollisionShapeMode.DISABLED
-				and _bodies[prototype_index].is_valid()
-				and is_instance_valid(baked_data.collision_shapes[prototype_index])
-				and not Engine.is_editor_hint()
+				Engine.is_editor_hint()
+				or prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.DISABLED
+				or not is_instance_valid(baked_data.collision_shapes[prototype_index])
+				or not _bodies[prototype_index].is_valid()
 			):
-			PhysicsServer3D.body_add_shape.call_deferred(
-				_bodies[prototype_index],
-				baked_data.collision_shapes[prototype_index],
-				baked_data.transforms[i]
-			)
+			return
+		PhysicsServer3D.body_add_shape(
+			_bodies[prototype_index],
+			baked_data.collision_shapes[prototype_index],
+			baked_data.transforms[i]
+		)
 	
 	# Emit signal
-	instances_spawned.emit()
+	_is_spawning = false
+	spawn_finished.emit()
 
 
 func _despawn_instances() -> void:

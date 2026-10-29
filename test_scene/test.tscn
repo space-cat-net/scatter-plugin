@@ -92,8 +92,7 @@ mesh = ExtResource("4_b5o60")
 visibility_range_fade_mode = 1
 collision_shape_mode = 2
 weight = 3.0
-min_radius = 2.0
-max_radius = 3.0
+max_radius = 2.0
 masking_enabled = true
 density_mask = SubResource("NoiseTexture2D_w3851")
 metadata/_custom_type_script = "uid://b0p6mp2dxtpy1"
@@ -224,6 +223,7 @@ script = ExtResource("3_h4gmi")
 prototypes = Array[ExtResource("4_w3851")]([SubResource("Resource_o5ruh"), SubResource("Resource_4wdjm")])
 random_seed = 3
 scatter_region = Vector3(450, 10, 450)
+frame_budget_ms = 0
 baked_data = ExtResource("5_w3851")
 metadata/_custom_type_script = "uid://w0lj2q7osp3t"
 
