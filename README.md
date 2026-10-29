@@ -1,4 +1,4 @@
-# Non-Destructive Scatter
+# Scatter3D Plugin
 
 Procedural object scattering for Godot 4. Uses Poisson disk sampling with variable radius,
 projects onto mesh surfaces via TriangleMesh, and renders/physics instances directly
