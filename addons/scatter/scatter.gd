@@ -36,6 +36,10 @@ const MAX_POINT_ATTEMPTS = 32
 ## Editor-only; not used at runtime.
 const BAKE_FRAME_BUDGET_MS := 64
 
+## Max time (ms) for instance creation per frame during spawn in editor.
+const EDITOR_FRAME_BUDGET := 4
+
+
 #region Export Variables
 ## List of instance types Scatter3D will generate.
 ## Types define generation rules, visual and physical properties of instance .
@@ -129,9 +133,9 @@ func bake() -> Error:
 	var _weights: PackedFloat32Array = []
 	var _masks: Array[Image] = []
 	
-	
 	var min_radius_overall: float = INF
 	var max_radius_overall: float = 0
+	
 	for index in range(prototypes.size()):
 		if is_instance_valid(prototypes[index]):
 			# Register prototype
@@ -185,7 +189,6 @@ func bake() -> Error:
 		source_mesh_instance.global_transform.affine_inverse() * global_transform
 	)
 	var half_boundaries: Vector3 = scatter_region * 0.5
-	
 	
 	# Generate grid for Poisson disk sampling
 	var grid_size: float = min_radius_overall / (1.4142135623730951 * 0.999)
@@ -397,10 +400,13 @@ func _spawn_instances() -> void:
 	
 	# Define variables
 	var frame_start: float = 0
+	var frame_budget = frame_budget_ms
+	if Engine.is_editor_hint():
+		frame_budget = EDITOR_FRAME_BUDGET
 	
 	# Main population loop
 	for i in range(len(baked_data.transforms)):
-		if frame_budget_ms > 0 and Time.get_ticks_msec() - frame_start > frame_budget_ms:
+		if frame_budget > 0 and Time.get_ticks_msec() - frame_start > frame_budget:
 			await get_tree().process_frame
 			frame_start = Time.get_ticks_msec()
 		
@@ -412,29 +418,29 @@ func _spawn_instances() -> void:
 		
 		# Creating and vonfiguring instance.
 		var instance: RID = RenderingServer.instance_create()
-		RenderingServer.instance_set_scenario.call_deferred(instance, get_world_3d().scenario)
-		RenderingServer.instance_set_base.call_deferred(instance, prototype.mesh)
+		RenderingServer.instance_set_scenario(instance, get_world_3d().scenario)
+		RenderingServer.instance_set_base(instance, prototype.mesh)
 		
-		RenderingServer.instance_set_transform.call_deferred(instance, baked_data.transforms[i])
-		RenderingServer.instance_set_visibility_parent.call_deferred(instance, self)
+		RenderingServer.instance_set_transform(instance, baked_data.transforms[i])
+		RenderingServer.instance_set_visibility_parent(instance, self)
 		
-		RenderingServer.instance_set_layer_mask.call_deferred(instance, prototype.layers)
-		RenderingServer.instance_attach_object_instance_id.call_deferred(instance, get_instance_id())
-		RenderingServer.instance_geometry_set_cast_shadows_setting.call_deferred(instance, prototype.cast_shadow)
-		RenderingServer.instance_geometry_set_lod_bias.call_deferred(instance, prototype.lod_bias)
+		RenderingServer.instance_set_layer_mask(instance, prototype.layers)
+		RenderingServer.instance_attach_object_instance_id(instance, get_instance_id())
+		RenderingServer.instance_geometry_set_cast_shadows_setting(instance, prototype.cast_shadow)
+		RenderingServer.instance_geometry_set_lod_bias(instance, prototype.lod_bias)
 		
-		RenderingServer.instance_geometry_set_flag.call_deferred(
+		RenderingServer.instance_geometry_set_flag(
 			instance,
 			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_BAKED_LIGHT,
 			prototype.gi_mode == GeometryInstance3D.GIMode.GI_MODE_STATIC
 		)
-		RenderingServer.instance_geometry_set_flag.call_deferred(
+		RenderingServer.instance_geometry_set_flag(
 			instance,
 			RenderingServer.InstanceFlags.INSTANCE_FLAG_USE_DYNAMIC_GI,
 			prototype.gi_mode == GeometryInstance3D.GIMode.GI_MODE_DYNAMIC
 		)
 		
-		RenderingServer.instance_geometry_set_visibility_range.call_deferred(
+		RenderingServer.instance_geometry_set_visibility_range(
 			instance,
 			prototype.visibility_range_begin,
 			prototype.visibility_range_end,
@@ -444,7 +450,7 @@ func _spawn_instances() -> void:
 		)
 		
 		if prototype.custom_aabb.has_volume():
-			RenderingServer.instance_set_custom_aabb.call_deferred(instance, prototype.custom_aabb)
+			RenderingServer.instance_set_custom_aabb(instance, prototype.custom_aabb)
 		
 		# Append instance
 		_instances.append(instance)
@@ -455,7 +461,7 @@ func _spawn_instances() -> void:
 				and _bodies[prototype_index].is_valid()
 				and is_instance_valid(baked_data.collision_shapes[prototype_index])
 			):
-			PhysicsServer3D.body_add_shape(
+			PhysicsServer3D.body_add_shape.call_deferred(
 				_bodies[prototype_index],
 				baked_data.collision_shapes[prototype_index],
 				baked_data.transforms[i]

@@ -70,8 +70,8 @@ random_scale = 0.2
 mesh = ExtResource("3_tuowb")
 visibility_range_fade_mode = 1
 collision_shape_mode = 2
-min_radius = 3.0
-max_radius = 4.0
+min_radius = 2.0
+max_radius = 3.0
 masking_enabled = true
 density_mask = SubResource("NoiseTexture2D_gs7cg")
 metadata/_custom_type_script = "uid://b0p6mp2dxtpy1"
@@ -92,8 +92,8 @@ mesh = ExtResource("4_b5o60")
 visibility_range_fade_mode = 1
 collision_shape_mode = 2
 weight = 3.0
-min_radius = 3.0
-max_radius = 6.0
+min_radius = 2.0
+max_radius = 3.0
 masking_enabled = true
 density_mask = SubResource("NoiseTexture2D_w3851")
 metadata/_custom_type_script = "uid://b0p6mp2dxtpy1"
@@ -195,6 +195,15 @@ metadata/_custom_type_script = "uid://b0p6mp2dxtpy1"
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_xn7ox"]
 
+[sub_resource type="GDScript" id="GDScript_fn5in"]
+resource_name = "framerate_label"
+script/source = "extends Label
+
+
+func _process(_delta: float) -> void:
+	text = 'FPS: %.0f (%.2f ms)' % [Engine.get_frames_per_second(), 1000 / Engine.get_frames_per_second()]
+"
+
 [node name="Test" type="Node3D" unique_id=429221623]
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=548757177]
@@ -239,3 +248,8 @@ shape = SubResource("CapsuleShape3D_xn7ox")
 
 [node name="Camera" type="Camera3D" parent="Player" unique_id=2101429890]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+
+[node name="FramerateLabel" type="Label" parent="." unique_id=119828030]
+offset_right = 40.0
+offset_bottom = 23.0
+script = SubResource("GDScript_fn5in")
