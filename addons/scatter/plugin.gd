@@ -77,7 +77,7 @@ func _on_bake_button_pressed() -> void:
 			'Baked successfully in ' + str(snappedf((Time.get_ticks_msec() - time) * 0.001, 0.01)) + ' s with ' + str(selected_scatter.baked_data.transforms.size()) + ' instances',
 			EditorToaster.SEVERITY_INFO
 		)
-	else:
+	elif err != OK and Engine.is_editor_hint():
 		EditorInterface.get_editor_toaster().push_toast(
 			'Bake failed',
 			EditorToaster.SEVERITY_ERROR

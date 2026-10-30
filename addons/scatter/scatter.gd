@@ -28,8 +28,8 @@ enum SamplingAlgorithm {
 	## Uniform random placement: fast, but produces clumps and gaps. Useful for quick iteration or dense grass where spacing is not critical.
 	RANDOM,
 	## Regular grid with per-prototype random offsets. Faster than POISSON_DISK,
-	## more uniform than RANDOM, but no minimum-spacing guarantee — prototypes
-	## with large offsets can overlap with neighbors. See [member ScatterPrototype.position_jitter]
+	## more uniform than RANDOM, but no minimum-spacing guarantee - prototypes
+	## with large offsets can overlap with neighbors. See [member BaseScatterPrototype.position_jitter]
 	GRID
 }
 
@@ -44,7 +44,7 @@ const BRIDSON_K: int = 30
 ## yields to the next frame via `await get_tree().process_frame`, keeping the
 ## editor responsive during long bakes. Higher = faster total bake, choppier
 ## editor; lower = smoother, slower. Editor-only; not used at runtime.
-## 64 ms ≈ 15 FPS during baking — acceptable for a blocking operation behind a
+## 64 ms ≈ 15 FPS during baking - acceptable for a blocking operation behind a
 ## progress dialog, and gives a meaningful speedup over smaller budgets.
 const BAKE_FRAME_BUDGET_MS: int = 64
 
@@ -59,7 +59,7 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 #region Export Variables
 ## List of instance types Scatter3D will generate.
 ## Types define generation rules, visual and physical properties of instance .
-@export var prototypes: Array[ScatterPrototype]
+@export var prototypes: Array[BaseScatterPrototype]
 @export_group('Generation')
 ## Strategy used to generate candidate points during bake. Changing this
 ## invalidates [member baked_data]; press Bake to rebuild. Parameters for the
@@ -88,17 +88,23 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 ## Hard upper bound on the number of instances a single Scatter3D can spawn.
 ## Generation stops early once this limit is reached, keeping the engine stable
 ## and preventing accidental "scatter the whole world" scenarios.
-@export_range(1, 2 ** 20, 1, 'or_greater') var max_instances: int = 2 ** 18
+@export_range(1, 2 ** 20, 1, 'or_greater') var max_instances: int = 2 ** 16
 @export_group('Data')
 ## Baked generation result: instance transforms, type indices, and seed.
 ## [code]null[/code] if the scatter has never been generated or the bake was invalidated
 ## (e.g. after changing prototypes or scatter_size). Persisted with the scene
 ## so instances can be re-spawned on load without regenerating.
 @export var baked_data: ScatterData
+@export_group('Editor')
+## If true, Scatter3D will not spawn instances inside editor. Useful, when
+## spawning requires long time.
+@export var editor_spawn_disabled: bool = false
 #endregion
 
 # RenderingServer instances
 var _instances: Array[RID]
+var _scene_instances: Array[Node]
+var _multimeshes: Array[RID]
 # PhysicsServer3D instances
 var _colliders: Array[RID]
 var _bodies: Array[RID]
@@ -130,10 +136,16 @@ func _exit_tree() -> void:
 ## Bake scatter and save data.
 func bake() -> Error:
 	if is_baking():
+		push_error('Scatter3D is already baking')
 		return FAILED
+	if prototypes.is_empty():
+		push_error('You need at least one valid prototype to bake Scatter3D')
+		return FAILED
+	
 	# Getting source mesh
 	if not is_instance_valid(get_parent()) or \
 		not get_parent() is MeshInstance3D or not is_instance_valid(get_parent().mesh):
+		push_error('Failed to bake Scatter3D - ensure parent node is MeshInstance3D with valid mesh')
 		return FAILED
 	var source_mesh_instance: MeshInstance3D = get_parent() as MeshInstance3D
 	
@@ -153,13 +165,17 @@ func bake() -> Error:
 	var type_indixes: PackedInt32Array = []
 	var _weights: PackedFloat32Array = []
 	var _masks: Array[Image] = []
+	var _color_masks: Array[Image] = []
 	
 	var min_radius_overall: float = INF
 	var max_radius_overall: float = 0
 	
 	var result_transforms: Array[Transform3D]
 	var result_prototypes: PackedInt32Array
+	var result_colors: PackedColorArray = []
 	var result_collision_shapes: Array[Shape3D]
+	var result_prototype_counts: PackedInt32Array = []
+	result_prototype_counts.resize(prototypes.size())
 	
 	for index in range(prototypes.size()):
 		if is_instance_valid(prototypes[index]):
@@ -169,10 +185,16 @@ func bake() -> Error:
 			_weights.append(prototype.weight)
 			
 			# Register mask (if enabled)
-			if prototype.masking_enabled:
+			if prototype.masking_enabled and is_instance_valid(prototype.density_mask):
 				_masks.append(prototype.density_mask.get_image())
 			else:
 				_masks.append(null)
+			
+			# Register color mask (if enabled)
+			if prototype is MultiMeshScatterPrototype and is_instance_valid(prototype.colors_mask):
+				_color_masks.append(prototype.colors_mask.get_image())
+			else:
+				_color_masks.append(null)
 			
 			# Compare radii
 			if prototype.min_radius < min_radius_overall:
@@ -182,14 +204,15 @@ func bake() -> Error:
 			
 			# Create and register collision shape
 			var shape: Shape3D = null
-			if prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.CONCAVE:
-				shape = prototype.mesh.create_trimesh_shape()
-			elif prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.CONVEX:
-				shape = prototype.mesh.create_convex_shape(true, false)
-			elif prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.CONVEX_SIMPLE:
-				shape = prototype.mesh.create_convex_shape(true, true)
-			elif prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.CUSTOM:
-				shape = prototype.collision_shape
+			if prototype is MeshScatterPrototype:
+				if prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CONCAVE:
+					shape = prototype.mesh.create_trimesh_shape()
+				elif prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CONVEX:
+					shape = prototype.mesh.create_convex_shape(true, false)
+				elif prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CONVEX_SIMPLE:
+					shape = prototype.mesh.create_convex_shape(true, true)
+				elif prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CUSTOM:
+					shape = prototype.collision_shape
 			
 			result_collision_shapes.append(shape)
 		else:
@@ -295,15 +318,21 @@ func bake() -> Error:
 		elif sampling_algorithm == SamplingAlgorithm.RANDOM:
 			point = Vector3(scatter_region.x * random.randf_range(-1, 1), 0, scatter_region.z * random.randf_range(-1, 1))
 		elif sampling_algorithm == SamplingAlgorithm.GRID:
-			spawn_grid_idx += 1
-			var col := int(spawn_grid_idx) % int(scatter_region.x / scatter_grid_size)
-			var row := int(float(spawn_grid_idx) / (scatter_region.x / scatter_grid_size))
+			if spawn_grid_idx >= spawn_grid_total:
+				break
+			
+			var cols := int(scatter_region.x / scatter_grid_size)
+			var col := spawn_grid_idx % cols
+			var row := spawn_grid_idx / cols
 			
 			var px := -half_boundaries.x + (col + 0.5) * scatter_grid_size
 			var pz := -half_boundaries.z + (row + 0.5) * scatter_grid_size
 			point = Vector3(px, 0, pz)
-			if spawn_grid_idx >= spawn_grid_total:
-				break
+			
+			spawn_grid_idx += 1
+		
+		if random.randf() < prototype.removal_probability:
+			continue
 		
 		point += prototype.position_jitter * Vector3(random.randf_range(-1, 1), random.randf_range(-1, 1), random.randf_range(-1, 1))
 		
@@ -350,6 +379,26 @@ func bake() -> Error:
 			or abs(local_projected_position.z) > scatter_region.z * 0.5:
 			continue
 		
+		# Color generation
+		var color: Color = Color.WHITE
+		if prototype is MultiMeshScatterPrototype:
+			if prototype.colors_mode == MultiMeshScatterPrototype.ColorMode.RANDOM:
+				color = Color.from_hsv(
+					random.randf_range(prototype.colors_random_hue_min, prototype.colors_random_hue_max),
+					random.randf_range(prototype.colors_random_saturation_min, prototype.colors_random_saturation_max),
+					random.randf_range(prototype.colors_random_value_min, prototype.colors_random_value_max),
+				)
+			elif prototype.colors_mode == MultiMeshScatterPrototype.ColorMode.PALETTE:
+				color = prototype.colors_palette[
+					random.rand_weighted(prototype.colors_palette_weights)
+				]
+			elif prototype.colors_mode == MultiMeshScatterPrototype.ColorMode.MASK:
+				var texture_mask_size: Vector2i = _color_masks[prototype_index].get_size()
+				color = _color_masks[prototype_index].get_pixel(
+					clampi(roundi((point.x + half_boundaries.x) * float(texture_mask_size.x) / scatter_region.x), 0, texture_mask_size.x - 1),
+					clampi(roundi((point.z + half_boundaries.z) * float(texture_mask_size.y) / scatter_region.z), 0, texture_mask_size.y - 1),
+				)
+		
 		# Transform generation
 		var target_normal: Vector3 = Vector3.UP.lerp(raycast.normal, prototype.normal_alignment).normalized()
 		var base_basis: Basis = Basis(Quaternion(Vector3.UP, target_normal))
@@ -362,21 +411,24 @@ func bake() -> Error:
 		xform = xform.scaled_local(Vector3.ONE * scale_val)
 		xform = xform.translated_local(prototype.position_offset)
 		
+		result_prototype_counts[prototype_index] += 1
 		result_prototypes.append(prototype_index)
 		result_transforms.append(xform)
+		result_colors.append(color)
 	
 	# Save results to ScatterData
 	baked_data.clear()
 	baked_data.random_seed = random.seed
-	baked_data.collision_shapes = result_collision_shapes
-	baked_data.prototypes = result_prototypes
 	baked_data.transforms = result_transforms
+	baked_data.prototypes = result_prototypes
+	baked_data.colors = result_colors
+	baked_data.collision_shapes = result_collision_shapes
+	baked_data.prototype_counts = result_prototype_counts
 	
 	# Clear baking status
 	_is_baking = false
-	
 	# Spawn generated instances
-	_spawn_instances()
+	_spawn_instances.call_deferred()
 	
 	# Emit signal and return OK
 	bake_finished.emit()
@@ -415,31 +467,58 @@ func is_spawning() -> bool:
 ## Returns true if any RIDs for the current bake are currently spawned in the
 ## RenderingServer and PhysicsServer.
 func has_instances() -> bool:
-	return not _instances.is_empty()
+	return not _instances.is_empty() or not _scene_instances.is_empty()
 
 
 func _spawn_instances() -> void:
-	if not visible or not is_baked() or is_baking():
+	if not visible or not is_baked() or is_baking() or prototypes.is_empty():
 		return
+	if editor_spawn_disabled and Engine.is_editor_hint():
+		return
+	
+	_despawn_instances()
 	
 	_is_spawning = true
 	
 	# Generate body
 	_bodies = []
-	var generated_any_physical_body: bool = false
 	for prototype_index in range(len(prototypes)):
 		_bodies.append(PhysicsServer3D.body_create())
-		if prototypes[prototype_index].collision_shape_mode != ScatterPrototype.CollisionShapeMode.DISABLED:
-			generated_any_physical_body = true
+		if prototypes[prototype_index] is MeshScatterPrototype \
+				and prototypes[prototype_index].collision_shape_mode != MeshScatterPrototype.CollisionShapeMode.DISABLED:
 			PhysicsServer3D.body_set_space(_bodies[prototype_index], get_world_3d().space)
 			PhysicsServer3D.body_set_mode(_bodies[prototype_index], PhysicsServer3D.BODY_MODE_STATIC)
 			PhysicsServer3D.body_set_collision_layer(_bodies[prototype_index], prototypes[prototype_index].collision_layer)
 			PhysicsServer3D.body_set_collision_mask(_bodies[prototype_index], prototypes[prototype_index].collision_mask)
 	
+	_multimeshes = []
+	for prototype_index in range(len(prototypes)):
+		var prototype: BaseScatterPrototype = prototypes[prototype_index]
+		var multimesh = RenderingServer.multimesh_create()
+		_multimeshes.append(multimesh)
+		if prototype is MultiMeshScatterPrototype:
+			RenderingServer.multimesh_set_mesh(multimesh, prototype.mesh)
+			RenderingServer.multimesh_allocate_data(
+				multimesh,
+				baked_data.prototype_counts[prototype_index],
+				RenderingServer.MULTIMESH_TRANSFORM_3D,
+				prototype.colors_mode != MultiMeshScatterPrototype.ColorMode.DISABLED,
+				false,
+				false
+			)
+			RenderingServer.multimesh_set_visible_instances(multimesh, baked_data.prototype_counts[prototype_index])
+			var rid = _configure_multimesh_instance(prototype, multimesh, prototype_index)
+			_instances.append(rid)
+		
+	
 	# Define variables
 	var scenario = get_world_3d().scenario
 	var frame_start: float = 0
 	var frame_budget = frame_budget_ms
+	
+	var multimesh_instance_counter: PackedInt32Array
+	multimesh_instance_counter.resize(prototypes.size())
+	
 	if Engine.is_editor_hint():
 		frame_budget = EDITOR_SPAWN_FRAME_BUDGET_MS
 	
@@ -452,35 +531,40 @@ func _spawn_instances() -> void:
 		var prototype_index: int = baked_data.prototypes[i]
 		var prototype = prototypes[prototype_index]
 		
-		if not is_instance_valid(prototype) or not is_instance_valid(prototype.mesh):
+		if not is_instance_valid(prototype):
 			continue
 		
 		# Create and configure instance
-		var instance: RID = RenderingServer.instance_create()
-		_configure_instance_rendering.call_deferred(
-			instance,
-			prototype,
-			baked_data.transforms[i],
-			scenario,
-			get_instance_id()
-		)
-		
-		# Append instance
-		_instances.append(instance)
-		
-		# Adding collision shape
-		if (
-				Engine.is_editor_hint()
-				or prototype.collision_shape_mode == ScatterPrototype.CollisionShapeMode.DISABLED
-				or not is_instance_valid(baked_data.collision_shapes[prototype_index])
-				or not _bodies[prototype_index].is_valid()
-			):
-			continue
-		PhysicsServer3D.body_add_shape(
-			_bodies[prototype_index],
-			baked_data.collision_shapes[prototype_index],
-			baked_data.transforms[i]
-		)
+		if prototype is IndividualScatterPrototype:
+			if not is_instance_valid(prototype.mesh):
+				continue
+			var rid: RID = _configure_individual_instance(prototype, prototype_index, i)
+			_configure_collision_shape(prototype, prototype_index, i)
+			# Append instance
+			_instances.append(rid)
+		elif prototype is MultiMeshScatterPrototype:
+			if not is_instance_valid(prototype.mesh):
+				continue
+			var multimesh = _multimeshes[prototype_index]
+			_configure_collision_shape(prototype, prototype_index, i)
+			RenderingServer.multimesh_instance_set_transform(
+				multimesh,
+				multimesh_instance_counter[prototype_index],
+				baked_data.transforms[i]
+			)
+			if prototype.colors_mode != MultiMeshScatterPrototype.ColorMode.DISABLED:
+				RenderingServer.multimesh_instance_set_color(
+					multimesh,
+					multimesh_instance_counter[prototype_index],
+					baked_data.colors[i]
+				)
+			multimesh_instance_counter[prototype_index] += 1
+		elif prototype is SceneScatterPrototype:
+			if is_instance_valid(prototype.scene):
+				var instance = prototype.scene.instantiate(PackedScene.GEN_EDIT_STATE_DISABLED)
+				add_child(instance, false, Node.INTERNAL_MODE_DISABLED)
+				instance.global_transform = baked_data.transforms[i]
+				_scene_instances.append(instance)
 	
 	# Emit signal
 	_is_spawning = false
@@ -488,25 +572,35 @@ func _spawn_instances() -> void:
 
 
 func _despawn_instances() -> void:
+	if not has_instances():
+		return
+	
 	for i in _instances:
 		RenderingServer.free_rid(i)
 	
 	for i in _colliders + _bodies:
 		PhysicsServer3D.free_rid(i)
 	
+	for i in _scene_instances:
+		if is_instance_valid(i) and i is Node and not i.is_queued_for_deletion():
+			i.queue_free()
+	
+	_scene_instances = []
 	_instances = []
 	_colliders = []
 	_bodies = []
 
 
-func _configure_instance_rendering(instance: RID, prototype: ScatterPrototype, xform: Transform3D, _populate_scenario: RID, _populate_object_id: int) -> void:
+func _configure_individual_instance(prototype: BaseScatterPrototype, prototype_index: int, index: int) -> RID:
+	var xform: Transform3D = baked_data.transforms[index]
 	var rs := RenderingServer
-	rs.instance_set_scenario(instance, _populate_scenario)
+	var instance: RID = RenderingServer.instance_create()
+	rs.instance_set_scenario(instance, get_world_3d().scenario)
 	rs.instance_set_base(instance, prototype.mesh)
 	rs.instance_set_transform(instance, xform)
 	rs.instance_set_visibility_parent(instance, self)
 	rs.instance_set_layer_mask(instance, prototype.layers)
-	rs.instance_attach_object_instance_id(instance, _populate_object_id)
+	rs.instance_attach_object_instance_id(instance, (get_instance_id() << 32) | index)
 	rs.instance_geometry_set_cast_shadows_setting(instance, prototype.cast_shadow)
 	rs.instance_geometry_set_lod_bias(instance, prototype.lod_bias)
 	rs.instance_geometry_set_flag(instance, RenderingServer.INSTANCE_FLAG_USE_BAKED_LIGHT,
@@ -519,3 +613,42 @@ func _configure_instance_rendering(instance: RID, prototype: ScatterPrototype, x
 		prototype.visibility_range_fade_mode)
 	if prototype.custom_aabb.has_volume():
 		rs.instance_set_custom_aabb(instance, prototype.custom_aabb)
+	return instance
+
+
+func _configure_multimesh_instance(prototype: BaseScatterPrototype, multimesh: RID, prototype_index: int) -> RID:
+	var rs := RenderingServer
+	var instance: RID = RenderingServer.instance_create()
+	rs.instance_set_scenario(instance, get_world_3d().scenario)
+	rs.instance_set_base(instance, multimesh)
+	rs.instance_set_transform(instance, global_transform)
+	rs.instance_set_visibility_parent(instance, self)
+	rs.instance_set_layer_mask(instance, prototype.layers)
+	rs.instance_attach_object_instance_id(instance, prototype_index)
+	rs.instance_geometry_set_cast_shadows_setting(instance, prototype.cast_shadow)
+	rs.instance_geometry_set_lod_bias(instance, prototype.lod_bias)
+	rs.instance_geometry_set_flag(instance, RenderingServer.INSTANCE_FLAG_USE_BAKED_LIGHT,
+		prototype.gi_mode == GeometryInstance3D.GI_MODE_STATIC)
+	rs.instance_geometry_set_flag(instance, RenderingServer.INSTANCE_FLAG_USE_DYNAMIC_GI,
+		prototype.gi_mode == GeometryInstance3D.GI_MODE_DYNAMIC)
+	rs.instance_geometry_set_visibility_range(instance,
+		prototype.visibility_range_begin, prototype.visibility_range_end,
+		prototype.visibility_range_begin_margin, prototype.visibility_range_end_margin,
+		prototype.visibility_range_fade_mode)
+	if prototype.custom_aabb.has_volume():
+		rs.instance_set_custom_aabb(instance, prototype.custom_aabb)
+	return instance
+
+
+func _configure_collision_shape(prototype: BaseScatterPrototype, prototype_index: int, index: int) -> void:
+	if (
+				not Engine.is_editor_hint()
+				and not prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.DISABLED
+				and is_instance_valid(baked_data.collision_shapes[prototype_index])
+				and _bodies[prototype_index].is_valid()
+			):
+		PhysicsServer3D.body_add_shape(
+			_bodies[prototype_index],
+			baked_data.collision_shapes[prototype_index],
+			baked_data.transforms[index]
+		)

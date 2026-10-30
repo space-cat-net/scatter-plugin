@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://draiib55g5xsf"
-path="res://.godot/imported/scatter_instance_type.svg-4ce27b62f4457c7faa5f3c7ab5a8af01.ctex"
+uid="uid://dfeapjrchpc6r"
+path="res://.godot/imported/base_scatter_prototype.svg-3ca6c6ccf4e40c04b71de9364273b67b.ctex"
 metadata={
 "has_editor_variant": true,
 "vram_texture": false
@@ -11,8 +11,8 @@ metadata={
 
 [deps]
 
-source_file="res://addons/scatter/assets/scatter_instance_type.svg"
-dest_files=["res://.godot/imported/scatter_instance_type.svg-4ce27b62f4457c7faa5f3c7ab5a8af01.ctex"]
+source_file="res://addons/scatter/assets/base_scatter_prototype.svg"
+dest_files=["res://.godot/imported/base_scatter_prototype.svg-3ca6c6ccf4e40c04b71de9364273b67b.ctex"]
 
 [params]
 

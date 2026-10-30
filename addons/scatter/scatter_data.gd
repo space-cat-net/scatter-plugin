@@ -14,9 +14,12 @@ extends Resource
 # Per-instance cache
 @export_storage var transforms: Array[Transform3D]
 @export_storage var prototypes: PackedInt32Array
+@export_storage var colors: PackedColorArray
 
-# Per-type cache
+
+# Per-prototype cache
 @export_storage var collision_shapes: Array[Shape3D]
+@export_storage var prototype_counts: PackedInt32Array
 
 # Individual cache
 @export_storage var random_seed: int = -1
@@ -68,5 +71,7 @@ func _get(property: StringName) -> Variant:
 func clear() -> void:
 	prototypes = []
 	transforms = []
+	colors = []
 	collision_shapes = []
+	prototype_counts = []
 	random_seed = -1
