@@ -16,7 +16,6 @@ extends Resource
 @export_storage var prototypes: PackedInt32Array
 @export_storage var colors: PackedColorArray
 
-
 # Per-prototype cache
 @export_storage var collision_shapes: Array[Shape3D]
 @export_storage var prototype_counts: PackedInt32Array

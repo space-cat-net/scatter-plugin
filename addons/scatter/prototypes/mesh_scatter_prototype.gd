@@ -23,6 +23,7 @@ enum CollisionShapeMode {
 	CUSTOM
 }
 
+#region Geometry
 @export_group('Geometry')
 ## Visual mesh for this prototype.
 @export var mesh: Mesh
@@ -37,7 +38,9 @@ enum CollisionShapeMode {
 @export var gi_mode: GeometryInstance3D.GIMode = GeometryInstance3D.GIMode.GI_MODE_DISABLED
 ## See [member VisualInstance3D.layers]
 @export_flags_3d_render var layers: int = 0b00000000_00000000_00000000_00000001
+#endregion
 
+#region Geometry/Visibility Range
 @export_group('Geometry/Visibility Range', 'visibility_range_')
 ## See [member GeometryInstance3D.visibility_range_begin]
 @export_range(0, 4096, 0.001, 'or_greater', 'suffix:m')
@@ -54,7 +57,9 @@ var visibility_range_end_margin: float = 0.0
 ## See [member GeometryInstance3D.visibility_range_fade_mode]
 @export var visibility_range_fade_mode: RenderingServer.VisibilityRangeFadeMode\
 = RenderingServer.VisibilityRangeFadeMode.VISIBILITY_RANGE_FADE_DISABLED
+#endregion
 
+#region Collision
 @export_group('Collision', 'collision_')
 ## How to generate the collision shape for each instance. CUSTOM requires
 ## `collision_shape` to be set; other modes derive the shape from `mesh`.
@@ -67,6 +72,7 @@ var visibility_range_end_margin: float = 0.0
 @export_flags_3d_physics var collision_layer: int = 0b00000000_00000000_00000000_00000001
 ## See [member CollisionObject3D.collision_mask]
 @export_flags_3d_physics var collision_mask: int = 0b00000000_00000000_00000000_00000001
+#endregion
 
 
 func _validate_property(property: Dictionary) -> void:

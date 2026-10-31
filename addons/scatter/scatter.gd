@@ -60,6 +60,7 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 ## List of instance types Scatter3D will generate.
 ## Types define generation rules, visual and physical properties of instance .
 @export var prototypes: Array[BaseScatterPrototype]
+
 @export_group('Generation')
 ## Strategy used to generate candidate points during bake. Changing this
 ## invalidates [member baked_data]; press Bake to rebuild. Parameters for the
@@ -78,6 +79,7 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 	set(val):
 		scatter_region = val
 		update_gizmos()
+
 @export_group('Performance')
 ## Soft time budget (ms) for instance creation per frame during spawn.
 ## When the budget is exceeded, spawning pauses and resumes next frame - 
@@ -89,12 +91,14 @@ const EDITOR_SPAWN_FRAME_BUDGET_MS: int = 16
 ## Generation stops early once this limit is reached, keeping the engine stable
 ## and preventing accidental "scatter the whole world" scenarios.
 @export_range(1, 2 ** 20, 1, 'or_greater') var max_instances: int = 2 ** 16
+
 @export_group('Data')
 ## Baked generation result: instance transforms, type indices, and seed.
 ## [code]null[/code] if the scatter has never been generated or the bake was invalidated
 ## (e.g. after changing prototypes or scatter_size). Persisted with the scene
 ## so instances can be re-spawned on load without regenerating.
 @export var baked_data: ScatterData
+
 @export_group('Editor')
 ## If true, Scatter3D will not spawn instances inside editor. Useful, when
 ## spawning requires long time.
@@ -135,6 +139,7 @@ func _exit_tree() -> void:
 
 ## Bake scatter and save data.
 func bake() -> Error:
+	#region Pre-bake
 	if is_baking():
 		push_error('Scatter3D is already baking')
 		return FAILED
@@ -151,12 +156,8 @@ func bake() -> Error:
 	
 	var time = Time.get_ticks_msec()
 	
-	# Clear cache and remove instances
+	# Despawn instances and turn on baking status
 	_despawn_instances()
-	
-	if baked_data == null:
-		baked_data = ScatterData.new()
-	
 	_is_baking = true
 	
 	var source_mesh: Mesh = source_mesh_instance.mesh
@@ -202,9 +203,10 @@ func bake() -> Error:
 			if prototype.max_radius > max_radius_overall:
 				max_radius_overall = prototype.max_radius
 			
-			# Create and register collision shape
+			# Create and add collision shape
 			var shape: Shape3D = null
 			if prototype is MeshScatterPrototype:
+				# ATTENTION: built-in collision generation takes long time.
 				if prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CONCAVE:
 					shape = prototype.mesh.create_trimesh_shape()
 				elif prototype.collision_shape_mode == MeshScatterPrototype.CollisionShapeMode.CONVEX:
@@ -228,6 +230,7 @@ func bake() -> Error:
 	random.seed = random_seed
 	if random_seed == -1:
 		random.seed = randi()
+	#endregion
 	
 	# Define variables
 	var frame_start: float = Time.get_ticks_msec()
@@ -268,6 +271,7 @@ func bake() -> Error:
 		
 		var point: Vector3
 		
+		#region Sampling
 		if sampling_algorithm == SamplingAlgorithm.POISSON_DISK:
 			var idx: int = random.randi_range(0, active_points.size() - 1)
 			var point_radius: float = random.randf_range(prototype.min_radius, prototype.max_radius)
@@ -330,7 +334,9 @@ func bake() -> Error:
 			point = Vector3(px, 0, pz)
 			
 			spawn_grid_idx += 1
+		#endregion
 		
+		#region Filtering and masking
 		if random.randf() < prototype.removal_probability:
 			continue
 		
@@ -344,22 +350,34 @@ func bake() -> Error:
 		if raycast.is_empty():
 			continue
 		
+		# Projected ray position in global coords.
 		var projected_position = source_mesh_instance.to_global(raycast.position)
+		var local_projected_position = to_local(projected_position)
 		
-		# Filter by height
-		if prototype.height_filtering_enabled and \
-			(
-				projected_position.y < prototype.height_filtering_min_height
-				or
-				projected_position.y > prototype.height_filtering_max_height
-			):
+		# Check, is instance inside scatter_region
+		if abs(local_projected_position.x) > scatter_region.x * 0.5\
+			or abs(local_projected_position.y) > scatter_region.y * 0.5\
+			or abs(local_projected_position.z) > scatter_region.z * 0.5:
 			continue
 		
 		# Filter normals using dot product
-		if prototype.normal_filtering_enabled\
-			and raycast.normal.dot(prototype.normal_filtering_normal) <= \
-			remap(prototype.normal_filtering_angle, 0, TAU, 1, -1):
-			continue
+		if prototype.normal_filtering_enabled:
+			var dot_product = 2.0 * acos(clampf(raycast.normal.dot(prototype.normal_filtering_normal), -1.0, 1.0))
+			if dot_product < prototype.normal_filtering_angle_min or dot_product > prototype.normal_filtering_angle_max:
+				continue
+		
+		# Filter by height
+		if prototype.height_filtering_enabled and is_instance_valid(prototype.height_filtering_curve):
+			var h: float = remap(
+				local_projected_position.y,
+				-half_boundaries.y,
+				half_boundaries.y,
+				0,
+				1
+			)
+			print(h)
+			if random.randf() > prototype.height_filtering_curve.sample_baked(h):
+				continue
 		
 		# Texture masking
 		if prototype.masking_enabled:
@@ -371,13 +389,7 @@ func bake() -> Error:
 			
 			if random.randf() > texture_mask_value:
 				continue
-		
-		# Check, is instance inside scatter_region
-		var local_projected_position = to_local(projected_position)
-		if abs(local_projected_position.x) > scatter_region.x * 0.5\
-			or abs(local_projected_position.y) > scatter_region.y * 0.5\
-			or abs(local_projected_position.z) > scatter_region.z * 0.5:
-			continue
+		#endregion
 		
 		# Color generation
 		var color: Color = Color.WHITE
@@ -403,20 +415,26 @@ func bake() -> Error:
 		var target_normal: Vector3 = Vector3.UP.lerp(raycast.normal, prototype.normal_alignment).normalized()
 		var base_basis: Basis = Basis(Quaternion(Vector3.UP, target_normal))
 		var xform: Transform3D = Transform3D(base_basis, projected_position)
+		var scale_val: float = prototype.base_scale + random.randf_range(-1, 1) * prototype.random_scale
+		scale_val = maxf(scale_val, 0.001)
+		
 		xform = xform.rotated_local(Vector3.UP, random.randf_range(-1, 1) * prototype.random_rotation)
 		xform = xform.rotated_local(Vector3.RIGHT, random.randf_range(-1, 1) * prototype.random_tilt)
 		xform = xform.rotated_local(Vector3.BACK,  random.randf_range(-1, 1) * prototype.random_tilt)
-		var scale_val: float = prototype.base_scale + random.randf_range(-1, 1) * prototype.random_scale
-		scale_val = maxf(scale_val, 0.001)
 		xform = xform.scaled_local(Vector3.ONE * scale_val)
 		xform = xform.translated_local(prototype.position_offset)
 		
+		# Applying
 		result_prototype_counts[prototype_index] += 1
 		result_prototypes.append(prototype_index)
 		result_transforms.append(xform)
 		result_colors.append(color)
 	
-	# Save results to ScatterData
+	
+	# Write to [ScatterData] cache
+	if baked_data == null:
+		baked_data = ScatterData.new()
+	
 	baked_data.clear()
 	baked_data.random_seed = random.seed
 	baked_data.transforms = result_transforms
@@ -425,12 +443,13 @@ func bake() -> Error:
 	baked_data.collision_shapes = result_collision_shapes
 	baked_data.prototype_counts = result_prototype_counts
 	
-	# Clear baking status
+	# Turn off baking status
 	_is_baking = false
+	
 	# Spawn generated instances
 	_spawn_instances.call_deferred()
 	
-	# Emit signal and return OK
+	# Finished successfully
 	bake_finished.emit()
 	return OK
 

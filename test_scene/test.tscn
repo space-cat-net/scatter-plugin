@@ -38,11 +38,7 @@ volumetric_fog_albedo = Color(0.640625, 0.8113282, 1, 1)
 volumetric_fog_emission = Color(0.44296876, 0.5531837, 0.675, 1)
 volumetric_fog_emission_energy = 0.37
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_0lhco"]
-albedo_color = Color(0.1882353, 0.6, 0.4509804, 1)
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_xcje8"]
-material = SubResource("StandardMaterial3D_0lhco")
+[sub_resource type="PlaneMesh" id="PlaneMesh_xn7ox"]
 size = Vector2(500, 500)
 
 [sub_resource type="Resource" id="Resource_h4gmi"]
@@ -54,7 +50,8 @@ random_scale = 0.5
 base_scale = 2.0
 min_radius = 2.0
 max_radius = 5.0
-removal_probability = null
+normal_filtering_angle_min = null
+normal_filtering_angle_max = null
 metadata/_custom_type_script = "uid://btq7m6skgqg3b"
 
 [sub_resource type="Resource" id="Resource_j1bqn"]
@@ -66,7 +63,8 @@ random_scale = 0.5
 base_scale = 2.0
 min_radius = 2.0
 max_radius = 5.0
-removal_probability = null
+normal_filtering_angle_min = null
+normal_filtering_angle_max = null
 metadata/_custom_type_script = "uid://btq7m6skgqg3b"
 
 [sub_resource type="Resource" id="Resource_fn5in"]
@@ -108,13 +106,13 @@ environment = SubResource("Environment_b5o60")
 [node name="Surface" type="StaticBody3D" parent="." unique_id=1575208828]
 
 [node name="SurfaceMesh" type="MeshInstance3D" parent="Surface" unique_id=1215486594]
-mesh = SubResource("PlaneMesh_xcje8")
+mesh = SubResource("PlaneMesh_xn7ox")
 skeleton = NodePath("../..")
 
 [node name="Scatter3D" type="Node3D" parent="Surface/SurfaceMesh" unique_id=782322246]
 script = ExtResource("3_h4gmi")
 prototypes = Array[ExtResource("2_b5o60")]([SubResource("Resource_h4gmi"), SubResource("Resource_j1bqn")])
-scatter_region = Vector3(450, 10, 450)
+scatter_region = Vector3(450, 300, 450)
 max_instances = 262144
 baked_data = ExtResource("6_w3851")
 metadata/_custom_type_script = "uid://w0lj2q7osp3t"
@@ -125,6 +123,7 @@ prototypes = Array[ExtResource("2_b5o60")]([SubResource("Resource_fn5in")])
 sampling_algorithm = 1
 scatter_region = Vector3(500, 10, 500)
 frame_budget_ms = 0
+max_instances = 524288
 baked_data = ExtResource("8_hc83m")
 metadata/_custom_type_script = "uid://w0lj2q7osp3t"
 
